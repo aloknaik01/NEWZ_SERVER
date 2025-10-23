@@ -1,40 +1,52 @@
-import express from "express";
-import { config } from "dotenv";
-import cors from "cors";
-import conf from "./config/conf.js";
-import cookieParser from "cookie-parser";
-import fileUpload from "express-fileupload";
-import { errorMiddleware } from "./middlewares/errorMiddleware.js";
-import AuthRouter from "./router/authRoute.js";
-import ProductRouter from "./router/productRoute.js";
+import express from 'express';
+import cors from 'cors';
+import session from 'express-session';
+import passport from './config/passport.js';
+import authRoutes from './routes/authRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+import { errorHandler, notFound } from './middlewares/errorHandler.js';
 
 const app = express();
-config();
 
-
-
-app.use(
-  cors({
-    origin: conf.portfolioUrl,
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  })
-);
+// Middlewares
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  credentials: true
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
-app.use(
-  fileUpload({
-    tempFileDir: "./uploads",
-    useTempFiles: true,
-  })
-);
 
-app.use("/auth", AuthRouter);
-app.use("/product", ProductRouter);
+// Session for Google OAuth
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
+// Passport middleware
+app.use(passport.initialize());
+app.use(passport.session());
 
-app.use(errorMiddleware);
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Server is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
+
+// Error handlers
+app.use(notFound);
+app.use(errorHandler);
 
 export default app;

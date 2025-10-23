@@ -10,7 +10,7 @@ class AuthController {
   // REGISTER WITH EMAIL
   static async register(req, res) {
     const client = await pool.connect();
-    
+
     try {
       const { email, password, fullName, referredByCode } = req.body;
 
@@ -172,7 +172,7 @@ class AuthController {
 
       // Log login history
       const { deviceType, deviceName } = parseUserAgent(req.headers['user-agent']);
-      
+
       await pool.query(
         `INSERT INTO login_history (user_id, login_method, ip_address, device_type, device_name)
          VALUES ($1, 'email', $2, $3, $4)`,
@@ -257,7 +257,61 @@ class AuthController {
     }
   }
 
+  // LOGOUT
+  static async logout(req, res) {
+    try {
+      const { refreshToken } = req.body;
+
+      if (refreshToken) {
+        await pool.query(
+          'UPDATE refresh_tokens SET is_revoked = true WHERE token = $1',
+          [refreshToken]
+        );
+      }
+
+      return successResponse(res, 200, 'Logged out successfully');
+
+    } catch (error) {
+      console.error('Logout error:', error);
+      return errorResponse(res, 500, 'Logout failed');
+    }
+  }
+
+  // REFRESH ACCESS TOKEN
+  static async refreshToken(req, res) {
+    try {
+      const { refreshToken } = req.body;
+
+      if (!refreshToken) {
+        return errorResponse(res, 400, 'Refresh token is required');
+      }
+
+      // Verify refresh token
+      const decoded = await verifyRefreshToken(refreshToken);
+
+      if (!decoded) {
+        return errorResponse(res, 401, 'Invalid or expired refresh token');
+      }
+
+      // Get user info
+      const user = await UserModel.findById(decoded.userId);
+
+      if (!user) {
+        return errorResponse(res, 404, 'User not found');
+      }
+
+      // Generate new access token
+      const newAccessToken = generateAccessToken(user.user_id, user.email, user.role);
+
+      return successResponse(res, 200, 'Token refreshed successfully', {
+        accessToken: newAccessToken
+      });
+
+    } catch (error) {
+      console.error('Token refresh error:', error);
+      return errorResponse(res, 500, 'Token refresh failed');
+    }
+  }
 }
 
-
-        
+export default AuthController;

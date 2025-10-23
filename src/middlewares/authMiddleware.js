@@ -1,37 +1,72 @@
-import jwt from "jsonwebtoken";
-import database from "../db/db.js";
-import ErrorHandler from "./errorMiddleware.js";
-import { catchError } from "./catchError.js";
-import conf from "../config/conf.js";
+import { verifyAccessToken } from '../utils/tokenUtils.js';
+import { errorResponse } from '../utils/responseHandler.js';
 
-export const isAuth = catchError(async (req, res, next) => {
-  const { token } = req.cookies;
+// Verify JWT Token
+export const authenticate = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
 
-  if (!token) {
-    return next(new ErrorHandler("User is not Authenticated", 401));
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return errorResponse(res, 401, 'Access denied. No token provided.');
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = verifyAccessToken(token);
+
+    if (!decoded) {
+      return errorResponse(res, 401, 'Invalid or expired token');
+    }
+
+    // Attach user info to request
+    req.user = {
+      userId: decoded.userId,
+      email: decoded.email,
+      role: decoded.role
+    };
+
+    next();
+  } catch (error) {
+    console.error('Authentication error:', error);
+    return errorResponse(res, 500, 'Authentication failed');
   }
+};
 
-  const decoded = jwt.verify(token, conf.jwt.secretKey);
-
-  const user = await database.query(`SELECT * FROM users WHERE id=$1 LIMIT 1`, [
-    decoded.id,
-  ]);
-
-  req.user = user.rows[0];
-  next();
-});
-
-export const authorizeRoles = (...roles) => {
+// Check user role
+export const authorize = (...allowedRoles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return next(
-        new ErrorHandler(
-          `Role ${req.user.role} is not allowed to access the resource`,
-          403
-        )
-      );
+    if (!req.user) {
+      return errorResponse(res, 401, 'Unauthorized. Please login.');
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return errorResponse(res, 403, 'Forbidden. Insufficient permissions.');
     }
 
     next();
   };
+};
+
+// Optional authentication (for public routes that can show personalized content if logged in)
+export const optionalAuth = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const decoded = verifyAccessToken(token);
+
+      if (decoded) {
+        req.user = {
+          userId: decoded.userId,
+          email: decoded.email,
+          role: decoded.role
+        };
+      }
+    }
+
+    next();
+  } catch (error) {
+    // Don't block request if token is invalid
+    next();
+  }
 };

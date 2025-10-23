@@ -1,4 +1,4 @@
-import database from '../../db/db.js';
+import pool from '../config/database.js';
 
 class UserModel {
   // Create new user
@@ -12,7 +12,7 @@ class UserModel {
     `;
     
     const values = [email, passwordHash, referralCode, referredByCode, loginProvider, googleId];
-    const result = await database.query(query, values);
+    const result = await pool.query(query, values);
     return result.rows[0];
   }
 
@@ -26,7 +26,7 @@ class UserModel {
       WHERE u.email = $1 AND u.account_status = 'active'
     `;
     
-    const result = await database.query(query, [email.toLowerCase()]);
+    const result = await pool.query(query, [email.toLowerCase()]);
     return result.rows[0] || null;
   }
 
@@ -40,7 +40,7 @@ class UserModel {
       WHERE u.user_id = $1 AND u.account_status = 'active'
     `;
     
-    const result = await database.query(query, [userId]);
+    const result = await pool.query(query, [userId]);
     return result.rows[0] || null;
   }
 
@@ -53,7 +53,7 @@ class UserModel {
       WHERE u.google_id = $1 AND u.account_status = 'active'
     `;
     
-    const result = await database.query(query, [googleId]);
+    const result = await pool.query(query, [googleId]);
     return result.rows[0] || null;
   }
 
@@ -89,13 +89,13 @@ class UserModel {
       WHERE u.user_id = $1 AND u.account_status = 'active'
     `;
     
-    const result = await database.query(query, [userId]);
+    const result = await pool.query(query, [userId]);
     return result.rows[0] || null;
   }
 
   // Update last login
   static async updateLastLogin(userId) {
-    await database.query(
+    await pool.query(
       'UPDATE users SET last_login = NOW() WHERE user_id = $1',
       [userId]
     );
@@ -103,7 +103,7 @@ class UserModel {
 
   // Verify email
   static async verifyEmail(userId) {
-    await database.query(
+    await pool.query(
       'UPDATE users SET email_verified = true WHERE user_id = $1',
       [userId]
     );
@@ -125,7 +125,7 @@ class UserModel {
       RETURNING *
     `;
     
-    const result = await database.query(query, [userId, fullName, gender, age, phone, profileImage]);
+    const result = await pool.query(query, [userId, fullName, gender, age, phone, profileImage]);
     return result.rows[0];
   }
 }

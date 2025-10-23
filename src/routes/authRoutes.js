@@ -27,7 +27,7 @@ router.get(
     }
     next();
   },
-  passport.authenticate('google', { 
+  passport.authenticate('google', {
     scope: ['profile', 'email'],
     prompt: 'select_account'
   })
@@ -35,7 +35,7 @@ router.get(
 
 router.get(
   '/google/callback',
-  passport.authenticate('google', { 
+  passport.authenticate('google', {
     failureRedirect: `${process.env.CLIENT_URL}/login?error=google_auth_failed`,
     session: true
   }),
@@ -55,7 +55,7 @@ router.get(
 
       // Log login history
       const { deviceType, deviceName } = parseUserAgent(req.headers['user-agent']);
-      
+
       await pool.query(
         `INSERT INTO login_history (user_id, login_method, ip_address, device_type, device_name)
          VALUES ($1, 'google', $2, $3, $4)`,

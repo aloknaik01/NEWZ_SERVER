@@ -1,20 +1,16 @@
 import pool from '../config/database.js';
-import logger from '../config/logger.js';
+
 
 export async function createAllTables() {
   const client = await pool.connect();
   
   try {
     await client.query('BEGIN');
-    logger.info('Starting database table creation...');
-
-    // Enable UUID extension
-    await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
 
     // 1. Users Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
-        user_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+        user_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash TEXT,
         login_provider VARCHAR(20) DEFAULT 'email' CHECK (login_provider IN ('email', 'google')),
@@ -25,17 +21,15 @@ export async function createAllTables() {
         account_status VARCHAR(20) DEFAULT 'active' CHECK (account_status IN ('active', 'suspended', 'deleted')),
         role VARCHAR(10) DEFAULT 'user' CHECK (role IN ('user', 'admin')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_login TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        last_login TIMESTAMP
       );
       
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_users_referral ON users(referral_code);
       CREATE INDEX IF NOT EXISTS idx_users_google ON users(google_id);
-      CREATE INDEX IF NOT EXISTS idx_users_status ON users(account_status);
     `);
 
-    // 2. User Profiles
+    // 2. User Profiles Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_profiles (
         user_id UUID PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
@@ -47,14 +41,13 @@ export async function createAllTables() {
         country VARCHAR(50) DEFAULT 'India',
         total_referrals INT DEFAULT 0,
         total_articles_read INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
       CREATE INDEX IF NOT EXISTS idx_profiles_phone ON user_profiles(phone);
     `);
 
-    // 3. Email Verifications
+    // 3. Email Verifications Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS email_verifications (
         verification_id SERIAL PRIMARY KEY,
@@ -63,16 +56,13 @@ export async function createAllTables() {
         token_type VARCHAR(30) DEFAULT 'email_verification' CHECK (token_type IN ('email_verification', 'password_reset')),
         expires_at TIMESTAMP NOT NULL,
         is_used BOOLEAN DEFAULT false,
-        attempts INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
       CREATE INDEX IF NOT EXISTS idx_verification_token ON email_verifications(verification_token);
-      CREATE INDEX IF NOT EXISTS idx_verification_user ON email_verifications(user_id);
-      CREATE INDEX IF NOT EXISTS idx_verification_expires ON email_verifications(expires_at);
     `);
 
-    // 4. Refresh Tokens
+    // 4. Refresh Tokens Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS refresh_tokens (
         token_id SERIAL PRIMARY KEY,
@@ -80,17 +70,14 @@ export async function createAllTables() {
         token TEXT UNIQUE NOT NULL,
         expires_at TIMESTAMP NOT NULL,
         is_revoked BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        ip_address VARCHAR(45),
-        user_agent TEXT
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
       CREATE INDEX IF NOT EXISTS idx_refresh_token ON refresh_tokens(token);
       CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
-      CREATE INDEX IF NOT EXISTS idx_refresh_expires ON refresh_tokens(expires_at);
     `);
 
-    // 5. User Wallets
+    // 5. User Wallets Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_wallets (
         user_id UUID PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
@@ -98,12 +85,11 @@ export async function createAllTables() {
         total_earned BIGINT DEFAULT 0,
         total_redeemed BIGINT DEFAULT 0,
         referral_earnings BIGINT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    // 6. Referrals
+    // 6. Referrals Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS referrals (
         referral_id SERIAL PRIMARY KEY,
@@ -121,10 +107,9 @@ export async function createAllTables() {
       
       CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_user_id);
       CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_user_id);
-      CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
     `);
 
-    // 7. Login History
+    // 7. Login History Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS login_history (
         login_id SERIAL PRIMARY KEY,
@@ -135,113 +120,18 @@ export async function createAllTables() {
         city VARCHAR(100),
         country VARCHAR(100) DEFAULT 'India',
         login_method VARCHAR(20) CHECK (login_method IN ('email', 'google')),
-        success BOOLEAN DEFAULT true,
-        failure_reason TEXT,
         login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
-      CREATE INDEX IF NOT EXISTS idx_login_user ON login_history(user_id, login_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_login_method ON login_history(login_method);
-    `);
-
-    // 8. Audit Logs (for security tracking)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        log_id SERIAL PRIMARY KEY,
-        user_id UUID REFERENCES users(user_id) ON DELETE SET NULL,
-        action VARCHAR(50) NOT NULL,
-        entity_type VARCHAR(50),
-        entity_id TEXT,
-        old_values JSONB,
-        new_values JSONB,
-        ip_address VARCHAR(45),
-        user_agent TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
-      CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
-      CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
-    `);
-
-    // 9. Rate Limit Tracking
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS rate_limits (
-        limit_id SERIAL PRIMARY KEY,
-        identifier VARCHAR(255) NOT NULL,
-        action VARCHAR(50) NOT NULL,
-        attempts INT DEFAULT 1,
-        window_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        blocked_until TIMESTAMP,
-        UNIQUE (identifier, action)
-      );
-      
-      CREATE INDEX IF NOT EXISTS idx_rate_limit_identifier ON rate_limits(identifier, action);
-      CREATE INDEX IF NOT EXISTS idx_rate_limit_window ON rate_limits(window_start);
+      CREATE INDEX IF NOT EXISTS idx_login_user ON login_history(user_id, login_at);
     `);
 
     await client.query('COMMIT');
-    logger.info('All database tables created successfully');
+    console.log('All tables created successfully');
     
   } catch (error) {
     await client.query('ROLLBACK');
-    logger.error('Database table creation failed:', error);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-// Cleanup expired records (for cron job)
-export async function cleanupExpiredRecords() {
-  const client = await pool.connect();
-  
-  try {
-    await client.query('BEGIN');
-
-    // Delete expired verification tokens
-    const verificationResult = await client.query(
-      `DELETE FROM email_verifications 
-       WHERE expires_at < NOW() AND is_used = false`
-    );
-
-    // Delete expired refresh tokens
-    const tokenResult = await client.query(
-      `DELETE FROM refresh_tokens 
-       WHERE expires_at < NOW() OR is_revoked = true`
-    );
-
-    // Clean old audit logs (older than 90 days)
-    const auditResult = await client.query(
-      `DELETE FROM audit_logs 
-       WHERE created_at < NOW() - INTERVAL '90 days'`
-    );
-
-    // Clean old login history (older than 180 days)
-    const loginResult = await client.query(
-      `DELETE FROM login_history 
-       WHERE login_at < NOW() - INTERVAL '180 days'`
-    );
-
-    await client.query('COMMIT');
-
-    logger.info('✅ Cleanup completed:', {
-      verifications: verificationResult.rowCount,
-      tokens: tokenResult.rowCount,
-      audits: auditResult.rowCount,
-      logins: loginResult.rowCount
-    });
-
-    return {
-      verificationsDeleted: verificationResult.rowCount,
-      tokensDeleted: tokenResult.rowCount,
-      auditsDeleted: auditResult.rowCount,
-      loginsDeleted: loginResult.rowCount
-    };
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    logger.error('❌ Cleanup failed:', error);
+    console.error('Error creating tables:', error);
     throw error;
   } finally {
     client.release();

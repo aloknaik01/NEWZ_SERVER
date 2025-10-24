@@ -4,24 +4,16 @@ import UserModel from '../models/userModel.js';
 import WalletModel from '../models/walletModel.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/tokenUtils.js';
 import { generateReferralCode, generateVerificationToken, parseUserAgent } from '../utils/helpers.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/emailService.js';
 import { successResponse, errorResponse } from '../utils/responseHandler.js';
 
 class AuthController {
   // REGISTER WITH EMAIL
   static async register(req, res) {
     const client = await pool.connect();
-
+    
     try {
       const { email, password, fullName, referredByCode } = req.body;
-
-      // Validation
-      if (!email || !password || !fullName) {
-        return errorResponse(res, 400, 'Email, password, and full name are required');
-      }
-
-      if (password.length < 6) {
-        return errorResponse(res, 400, 'Password must be at least 6 characters');
-      }
 
       // Check if user exists
       const existingUser = await UserModel.findByEmail(email);
@@ -104,7 +96,7 @@ class AuthController {
         }
       }
 
-      // Create email verification token
+      // Generate verification token
       const verificationToken = generateVerificationToken();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
@@ -116,15 +108,19 @@ class AuthController {
 
       await client.query('COMMIT');
 
-      // TODO: Send verification email (implement later)
-      const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-
-      return successResponse(res, 201, 'Registration successful! Please verify your email.', {
-        userId: user.user_id,
-        email: user.email,
-        referralCode: user.referral_code,
-        verificationLink // Remove in production
+      // Send verification email (async, don't wait)
+      sendVerificationEmail(email, fullName, verificationToken).catch(err => {
+        console.error('Email send failed:', err.message);
       });
+
+      return successResponse(res, 201, 
+        'Registration successful! Please check your email to verify your account.', 
+        {
+          userId: user.user_id,
+          email: user.email,
+          referralCode: user.referral_code
+        }
+      );
 
     } catch (error) {
       await client.query('ROLLBACK');
@@ -140,15 +136,19 @@ class AuthController {
     try {
       const { email, password } = req.body;
 
-      if (!email || !password) {
-        return errorResponse(res, 400, 'Email and password are required');
-      }
-
       // Find user
       const user = await UserModel.findByEmail(email);
 
       if (!user) {
         return errorResponse(res, 401, 'Invalid email or password');
+      }
+
+      // Check email verification
+      if (user.login_provider === 'email' && !user.email_verified) {
+        return errorResponse(res, 403, 
+          'Please verify your email before logging in. Check your inbox for the verification link.', 
+          { needsVerification: true, email: user.email }
+        );
       }
 
       // Check if user registered with Google
@@ -172,7 +172,7 @@ class AuthController {
 
       // Log login history
       const { deviceType, deviceName } = parseUserAgent(req.headers['user-agent']);
-
+      
       await pool.query(
         `INSERT INTO login_history (user_id, login_method, ip_address, device_type, device_name)
          VALUES ($1, 'email', $2, $3, $4)`,
@@ -224,7 +224,7 @@ class AuthController {
         return errorResponse(res, 400, 'Verification token is required');
       }
 
-      // Find verification token
+      // Find token
       const result = await pool.query(
         `SELECT * FROM email_verifications 
          WHERE verification_token = $1 
@@ -235,10 +235,15 @@ class AuthController {
       );
 
       if (result.rows.length === 0) {
-        return errorResponse(res, 400, 'Invalid or expired verification token');
+        return errorResponse(res, 400, 
+          'Invalid or expired verification token. Please request a new one.'
+        );
       }
 
       const verification = result.rows[0];
+
+      // Start transaction
+      await pool.query('BEGIN');
 
       // Update user email_verified status
       await UserModel.verifyEmail(verification.user_id);
@@ -249,31 +254,181 @@ class AuthController {
         [verification.verification_id]
       );
 
-      return successResponse(res, 200, 'Email verified successfully!');
+      await pool.query('COMMIT');
+
+      return successResponse(res, 200, 
+        'Email verified successfully! You can now login to your account.'
+      );
 
     } catch (error) {
+      await pool.query('ROLLBACK');
       console.error('Verification error:', error);
-      return errorResponse(res, 500, 'Verification failed');
+      return errorResponse(res, 500, 'Email verification failed. Please try again.');
     }
   }
 
-  // LOGOUT
-  static async logout(req, res) {
+  // RESEND VERIFICATION EMAIL
+  static async resendVerification(req, res) {
     try {
-      const { refreshToken } = req.body;
+      const { email } = req.body;
 
-      if (refreshToken) {
-        await pool.query(
-          'UPDATE refresh_tokens SET is_revoked = true WHERE token = $1',
-          [refreshToken]
+      // Find user
+      const user = await UserModel.findByEmail(email);
+
+      if (!user) {
+        return errorResponse(res, 404, 'User not found');
+      }
+
+      if (user.email_verified) {
+        return errorResponse(res, 400, 'Email already verified');
+      }
+
+      // Check rate limit (manual check - additional to middleware)
+      const recentToken = await pool.query(
+        `SELECT * FROM email_verifications 
+         WHERE user_id = $1 
+         AND token_type = 'email_verification'
+         AND created_at > NOW() - INTERVAL '2 minutes'`,
+        [user.user_id]
+      );
+
+      if (recentToken.rows.length > 0) {
+        return errorResponse(res, 429, 
+          'Verification email already sent. Please check your inbox or wait 2 minutes.'
         );
       }
 
-      return successResponse(res, 200, 'Logged out successfully');
+      // Mark old tokens as used
+      await pool.query(
+        `UPDATE email_verifications 
+         SET is_used = true 
+         WHERE user_id = $1 AND token_type = 'email_verification'`,
+        [user.user_id]
+      );
+
+      // Generate new token
+      const verificationToken = generateVerificationToken();
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await pool.query(
+        `INSERT INTO email_verifications (user_id, verification_token, expires_at, token_type)
+         VALUES ($1, $2, $3, 'email_verification')`,
+        [user.user_id, verificationToken, expiresAt]
+      );
+
+      // Send email
+      await sendVerificationEmail(email, user.full_name, verificationToken);
+
+      return successResponse(res, 200, 'Verification email sent successfully');
 
     } catch (error) {
-      console.error('Logout error:', error);
-      return errorResponse(res, 500, 'Logout failed');
+      console.error('Resend verification error:', error);
+      return errorResponse(res, 500, 'Failed to resend verification email');
+    }
+  }
+
+  // REQUEST PASSWORD RESET
+  static async requestPasswordReset(req, res) {
+    try {
+      const { email } = req.body;
+
+      // Find user
+      const user = await UserModel.findByEmail(email);
+
+      // Always return success (security - don't reveal if email exists)
+      if (!user) {
+        return successResponse(res, 200, 
+          'If your email is registered, you will receive a password reset link.'
+        );
+      }
+
+      // Check if Google user
+      if (user.login_provider === 'google') {
+        return errorResponse(res, 400, 
+          'This account uses Google login. Password reset is not available.'
+        );
+      }
+
+      // Generate reset token
+      const resetToken = generateVerificationToken();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+      await pool.query(
+        `INSERT INTO email_verifications (user_id, verification_token, expires_at, token_type)
+         VALUES ($1, $2, $3, 'password_reset')`,
+        [user.user_id, resetToken, expiresAt]
+      );
+
+      // Send email
+      await sendPasswordResetEmail(email, user.full_name, resetToken);
+
+      return successResponse(res, 200, 
+        'If your email is registered, you will receive a password reset link.'
+      );
+
+    } catch (error) {
+      console.error('Password reset request error:', error);
+      return errorResponse(res, 500, 'Failed to process password reset request');
+    }
+  }
+
+  // RESET PASSWORD
+  static async resetPassword(req, res) {
+    try {
+      const { token, newPassword } = req.body;
+
+      // Find token
+      const result = await pool.query(
+        `SELECT * FROM email_verifications 
+         WHERE verification_token = $1 
+         AND token_type = 'password_reset'
+         AND is_used = false 
+         AND expires_at > NOW()`,
+        [token]
+      );
+
+      if (result.rows.length === 0) {
+        return errorResponse(res, 400, 
+          'Invalid or expired reset token. Please request a new one.'
+        );
+      }
+
+      const verification = result.rows[0];
+
+      // Hash new password
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+
+      // Start transaction
+      await pool.query('BEGIN');
+
+      // Update password
+      await pool.query(
+        'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+        [passwordHash, verification.user_id]
+      );
+
+      // Mark token as used
+      await pool.query(
+        'UPDATE email_verifications SET is_used = true WHERE verification_id = $1',
+        [verification.verification_id]
+      );
+
+      // Revoke all refresh tokens for security
+      await pool.query(
+        'UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1',
+        [verification.user_id]
+      );
+
+      await pool.query('COMMIT');
+
+      return successResponse(res, 200, 
+        'Password reset successful! You can now login with your new password.'
+      );
+
+    } catch (error) {
+      await pool.query('ROLLBACK');
+      console.error('Password reset error:', error);
+      return errorResponse(res, 500, 'Password reset failed. Please try again.');
     }
   }
 
@@ -286,7 +441,7 @@ class AuthController {
         return errorResponse(res, 400, 'Refresh token is required');
       }
 
-      // Verify refresh token
+      const { verifyRefreshToken } = await import('../utils/tokenUtils.js');
       const decoded = await verifyRefreshToken(refreshToken);
 
       if (!decoded) {
@@ -310,6 +465,26 @@ class AuthController {
     } catch (error) {
       console.error('Token refresh error:', error);
       return errorResponse(res, 500, 'Token refresh failed');
+    }
+  }
+
+  // LOGOUT
+  static async logout(req, res) {
+    try {
+      const { refreshToken } = req.body;
+
+      if (refreshToken) {
+        await pool.query(
+          'UPDATE refresh_tokens SET is_revoked = true WHERE token = $1',
+          [refreshToken]
+        );
+      }
+
+      return successResponse(res, 200, 'Logged out successfully');
+
+    } catch (error) {
+      console.error('Logout error:', error);
+      return errorResponse(res, 500, 'Logout failed');
     }
   }
 }

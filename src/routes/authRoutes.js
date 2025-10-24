@@ -1,7 +1,15 @@
 import express from 'express';
 import passport from '../config/passport.js';
 import AuthController from '../controllers/authController.js';
-import { registerValidation, loginValidation, validate } from '../middlewares/validation.js';
+import {
+  registerValidation,
+  loginValidation,
+  emailValidation,
+  resetRequestValidation,
+  resetPasswordValidation,
+  validate
+} from '../middlewares/validation.js';
+import { authLimiter, resendLimiter } from '../middlewares/security.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/tokenUtils.js';
 import WalletModel from '../models/walletModel.js';
 import { successResponse } from '../utils/responseHandler.js';
@@ -11,17 +19,19 @@ import pool from '../config/database.js';
 const router = express.Router();
 
 // Email/Password Routes
-router.post('/register', registerValidation, validate, AuthController.register);
-router.post('/login', loginValidation, validate, AuthController.login);
+router.post('/register', authLimiter, registerValidation, validate, AuthController.register);
+router.post('/login', authLimiter, loginValidation, validate, AuthController.login);
 router.get('/verify-email', AuthController.verifyEmail);
-router.post('/logout', AuthController.logout);
+router.post('/resend-verification', resendLimiter, emailValidation, validate, AuthController.resendVerification);
+router.post('/forgot-password', authLimiter, resetRequestValidation, validate, AuthController.requestPasswordReset);
+router.post('/reset-password', authLimiter, resetPasswordValidation, validate, AuthController.resetPassword);
 router.post('/refresh-token', AuthController.refreshToken);
+router.post('/logout', AuthController.logout);
 
 // Google OAuth Routes
 router.get(
   '/google',
   (req, res, next) => {
-    // Store referral code in session if present
     if (req.query.ref) {
       req.session.referralCode = req.query.ref;
     }
@@ -82,13 +92,5 @@ router.get(
     }
   }
 );
-
-// Get current Google auth user info (for testing)
-router.get('/google/user', (req, res) => {
-  if (req.isAuthenticated()) {
-    return successResponse(res, 200, 'User authenticated', req.user);
-  }
-  res.status(401).json({ success: false, message: 'Not authenticated' });
-});
 
 export default router;

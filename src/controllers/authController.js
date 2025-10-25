@@ -167,6 +167,16 @@ class AuthController {
       const accessToken = generateAccessToken(user.user_id, user.email, user.role);
       const refreshToken = await generateRefreshToken(user.user_id);
 
+      // SET COOKIE 
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+
+
       // Update last login
       await UserModel.updateLastLogin(user.user_id);
 
@@ -181,15 +191,6 @@ class AuthController {
 
       // Get wallet info
       const wallet = await WalletModel.getBalance(user.user_id);
-
-      // REFRESH TOKEN IN COOKIE
-      res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        path: '/'
-      });
 
 
       return successResponse(res, 200, 'Login successful', {
@@ -213,7 +214,10 @@ class AuthController {
           totalRedeemed: wallet?.total_redeemed || 0,
           referralEarnings: wallet?.referral_earnings || 0
         },
-        accessToken
+        tokens: {
+          accessToken,
+          refreshToken
+        }
       });
 
     } catch (error) {
@@ -442,10 +446,31 @@ class AuthController {
   // REFRESH ACCESS TOKEN
   static async refreshToken(req, res) {
     try {
-      const { refreshToken } = req.body;
+
+      let refreshToken;
+
+      //  Check cookie 
+      if (req.cookies && req.cookies.refreshToken) {
+        refreshToken = req.cookies.refreshToken;
+      }
+
+      //  Check body 
+      if (!refreshToken && req.body.refreshToken) {
+        refreshToken = req.body.refreshToken;
+      }
+
+
+      // Check Authorization header 
+      if (!refreshToken && req.headers['x-refresh-token']) {
+        refreshToken = req.headers['x-refresh-token'];
+      }
+
+      // const { refreshToken } = req.body;
+
+
 
       if (!refreshToken) {
-        return errorResponse(res, 400, 'Refresh token is required');
+        return errorResponse(res, 401, 'Refresh token not found!');
       }
 
       const { verifyRefreshToken } = await import('../utils/tokenUtils.js');
@@ -478,14 +503,24 @@ class AuthController {
   // LOGOUT
   static async logout(req, res) {
     try {
-      const { refreshToken } = req.body;
+      // READ TOKEN FROM COOKIE
+      const refreshToken = req.cookies.refreshToken;
 
       if (refreshToken) {
+        // Revoke token in database
         await pool.query(
           'UPDATE refresh_tokens SET is_revoked = true WHERE token = $1',
           [refreshToken]
         );
       }
+
+      // CLEAR COOKIE
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/'
+      });
 
       return successResponse(res, 200, 'Logged out successfully');
 

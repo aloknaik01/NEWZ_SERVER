@@ -12,7 +12,6 @@ import {
 import { authLimiter, resendLimiter } from '../middlewares/security.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/tokenUtils.js';
 import WalletModel from '../models/walletModel.js';
-import { successResponse } from '../utils/responseHandler.js';
 import { parseUserAgent } from '../utils/helpers.js';
 import pool from '../config/database.js';
 

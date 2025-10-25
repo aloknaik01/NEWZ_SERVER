@@ -6,7 +6,7 @@ import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { securityHeaders, apiLimiter } from './middlewares/security.js';
-
+import cookieParser from 'cookie-parser';
 const app = express();
 
 // Security headers
@@ -14,7 +14,7 @@ app.use(securityHeaders);
 
 // CORS
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: process.env.CLIENT_URL || 'http://localhost:5000',
   credentials: true
 }));
 
@@ -22,9 +22,13 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+
+//COOKIE PARSER
+app.use(cookieParser());
+
 // Session for Google OAuth
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -40,8 +44,8 @@ app.use(passport.session());
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'Server is running',
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()

@@ -2,37 +2,37 @@ import nodemailer from 'nodemailer';
 
 // Create transporter
 const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: process.env.EMAIL_PORT || 587,
-    secure: false,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD,
-    },
+  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port: process.env.EMAIL_PORT || 587,
+  secure: false,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD,
+  },
 });
 
 // Test email configuration on startup
 export const testEmailConnection = async () => {
-    try {
-        await transporter.verify();
-        console.log('Email service ready');
-        return true;
-    } catch (error) {
-        console.error('Email service failed:', error.message);
-        return false;
-    }
+  try {
+    await transporter.verify();
+    console.log('Email service ready');
+    return true;
+  } catch (error) {
+    console.error('Email service failed:', error.message);
+    return false;
+  }
 };
 
 // Send verification email
 export const sendVerificationEmail = async (email, userName, token) => {
-    try {
-        const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+  try {
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
 
-        const mailOptions = {
-            from: `"${process.env.APP_NAME || 'News Rewards'}" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: 'Verify Your Email',
-            html: `
+    const mailOptions = {
+      from: `"${process.env.APP_NAME || 'News Rewards'}" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: '✉️ Verify Your Email',
+      html: `
         <!DOCTYPE html>
         <html>
         <head>
@@ -48,13 +48,13 @@ export const sendVerificationEmail = async (email, userName, token) => {
         </head>
         <body>
           <div class="container">
-            <h2>Welcome ${userName}!</h2>
+            <h2>Welcome ${userName}! 🎉</h2>
             <p>Thank you for registering. Please verify your email to get started.</p>
             
             <a href="${verificationUrl}" class="button">Verify Email Address</a>
             
             <div class="info">
-              <strong> This link expires in 24 hours</strong>
+              <strong>⏰ This link expires in 24 hours</strong>
             </div>
             
             <p>If the button doesn't work, copy this link:</p>
@@ -70,7 +70,7 @@ export const sendVerificationEmail = async (email, userName, token) => {
         </body>
         </html>
       `,
-            text: `
+      text: `
         Welcome ${userName}!
         
         Please verify your email by visiting: ${verificationUrl}
@@ -79,27 +79,27 @@ export const sendVerificationEmail = async (email, userName, token) => {
         
         If you didn't create this account, please ignore this email.
       `
-        };
+    };
 
-        await transporter.sendMail(mailOptions);
-        console.log(`Verification email sent to: ${email}`);
-        return true;
-    } catch (error) {
-        console.error(`Failed to send email to ${email}:`, error.message);
-        return false;
-    }
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Verification email sent to: ${email}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Failed to send email to ${email}:`, error.message);
+    return false;
+  }
 };
 
 // Send password reset email
 export const sendPasswordResetEmail = async (email, userName, token) => {
-    try {
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+  try {
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
-        const mailOptions = {
-            from: `"${process.env.APP_NAME || 'News Rewards'}" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: 'Password Reset Request',
-            html: `
+    const mailOptions = {
+      from: `"${process.env.APP_NAME || 'News Rewards'}" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: '🔐 Password Reset Request',
+      html: `
         <!DOCTYPE html>
         <html>
         <head>
@@ -119,7 +119,7 @@ export const sendPasswordResetEmail = async (email, userName, token) => {
             <a href="${resetUrl}" class="button">Reset Password</a>
             
             <div class="warning">
-              <strong>This link expires in 1 hour</strong>
+              <strong>⏰ This link expires in 1 hour</strong>
             </div>
             
             <p>If you didn't request this, you can safely ignore this email.</p>
@@ -127,15 +127,15 @@ export const sendPasswordResetEmail = async (email, userName, token) => {
         </body>
         </html>
       `
-        };
+    };
 
-        await transporter.sendMail(mailOptions);
-        console.log(`Password reset email sent to: ${email}`);
-        return true;
-    } catch (error) {
-        console.error(`Failed to send reset email:`, error.message);
-        return false;
-    }
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Password reset email sent to: ${email}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Failed to send reset email:`, error.message);
+    return false;
+  }
 };
 
 export default transporter;

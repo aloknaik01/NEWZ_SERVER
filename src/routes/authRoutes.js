@@ -8,7 +8,7 @@ import {
   resetRequestValidation,
   resetPasswordValidation,
   validate
-} from '../middlewares/validation.js';
+} from '../middlewares/validations.js';
 import { authLimiter, resendLimiter } from '../middlewares/security.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/tokenUtils.js';
 import WalletModel from '../models/walletModel.js';

@@ -11,7 +11,7 @@ class AuthController {
   // REGISTER WITH EMAIL
   static async register(req, res) {
     const client = await pool.connect();
-    
+
     try {
       const { email, password, fullName, referredByCode } = req.body;
 
@@ -113,8 +113,8 @@ class AuthController {
         console.error('Email send failed:', err.message);
       });
 
-      return successResponse(res, 201, 
-        'Registration successful! Please check your email to verify your account.', 
+      return successResponse(res, 201,
+        'Registration successful! Please check your email to verify your account.',
         {
           userId: user.user_id,
           email: user.email,
@@ -145,8 +145,8 @@ class AuthController {
 
       // Check email verification
       if (user.login_provider === 'email' && !user.email_verified) {
-        return errorResponse(res, 403, 
-          'Please verify your email before logging in. Check your inbox for the verification link.', 
+        return errorResponse(res, 403,
+          'Please verify your email before logging in. Check your inbox for the verification link.',
           { needsVerification: true, email: user.email }
         );
       }
@@ -172,7 +172,7 @@ class AuthController {
 
       // Log login history
       const { deviceType, deviceName } = parseUserAgent(req.headers['user-agent']);
-      
+
       await pool.query(
         `INSERT INTO login_history (user_id, login_method, ip_address, device_type, device_name)
          VALUES ($1, 'email', $2, $3, $4)`,
@@ -181,6 +181,16 @@ class AuthController {
 
       // Get wallet info
       const wallet = await WalletModel.getBalance(user.user_id);
+
+      // REFRESH TOKEN IN COOKIE
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+
 
       return successResponse(res, 200, 'Login successful', {
         user: {
@@ -203,10 +213,7 @@ class AuthController {
           totalRedeemed: wallet?.total_redeemed || 0,
           referralEarnings: wallet?.referral_earnings || 0
         },
-        tokens: {
-          accessToken,
-          refreshToken
-        }
+        accessToken
       });
 
     } catch (error) {
@@ -235,7 +242,7 @@ class AuthController {
       );
 
       if (result.rows.length === 0) {
-        return errorResponse(res, 400, 
+        return errorResponse(res, 400,
           'Invalid or expired verification token. Please request a new one.'
         );
       }
@@ -256,7 +263,7 @@ class AuthController {
 
       await pool.query('COMMIT');
 
-      return successResponse(res, 200, 
+      return successResponse(res, 200,
         'Email verified successfully! You can now login to your account.'
       );
 
@@ -293,7 +300,7 @@ class AuthController {
       );
 
       if (recentToken.rows.length > 0) {
-        return errorResponse(res, 429, 
+        return errorResponse(res, 429,
           'Verification email already sent. Please check your inbox or wait 2 minutes.'
         );
       }
@@ -337,14 +344,14 @@ class AuthController {
 
       // Always return success (security - don't reveal if email exists)
       if (!user) {
-        return successResponse(res, 200, 
+        return successResponse(res, 200,
           'If your email is registered, you will receive a password reset link.'
         );
       }
 
       // Check if Google user
       if (user.login_provider === 'google') {
-        return errorResponse(res, 400, 
+        return errorResponse(res, 400,
           'This account uses Google login. Password reset is not available.'
         );
       }
@@ -362,7 +369,7 @@ class AuthController {
       // Send email
       await sendPasswordResetEmail(email, user.full_name, resetToken);
 
-      return successResponse(res, 200, 
+      return successResponse(res, 200,
         'If your email is registered, you will receive a password reset link.'
       );
 
@@ -388,7 +395,7 @@ class AuthController {
       );
 
       if (result.rows.length === 0) {
-        return errorResponse(res, 400, 
+        return errorResponse(res, 400,
           'Invalid or expired reset token. Please request a new one.'
         );
       }
@@ -421,7 +428,7 @@ class AuthController {
 
       await pool.query('COMMIT');
 
-      return successResponse(res, 200, 
+      return successResponse(res, 200,
         'Password reset successful! You can now login with your new password.'
       );
 

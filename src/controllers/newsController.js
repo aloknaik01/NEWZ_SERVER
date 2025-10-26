@@ -407,6 +407,36 @@ class NewsController {
             return errorResponse(res, 500, 'Failed to fetch stats');
         }
     }
+
+
+    // Manual news cleanup (Admin only)
+    static async cleanNewsNow(req, res) {
+        try {
+            const count = await NewsCleanupService.cleanNewsNow();
+
+            return successResponse(res, 200, 'News articles deleted successfully', {
+                deletedCount: count
+            });
+        } catch (error) {
+            console.error('Clean news error:', error);
+            return errorResponse(res, 500, 'Failed to clean news articles');
+        }
+    }
+
+    // Manual history cleanup (Admin only)
+    static async cleanHistoryNow(req, res) {
+        try {
+            const result = await NewsCleanupService.cleanHistoryNow();
+
+            return successResponse(res, 200, 'Reading history deleted successfully', {
+                historyDeleted: result.history,
+                statsDeleted: result.stats
+            });
+        } catch (error) {
+            console.error('Clean history error:', error);
+            return errorResponse(res, 500, 'Failed to clean reading history');
+        }
+    }
 }
 
 export default NewsController;

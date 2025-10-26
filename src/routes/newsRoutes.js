@@ -17,4 +17,6 @@ router.get('/news/user/stats', authenticate, NewsController.getUserStats);
 router.post('/news/admin/refresh', authenticate, authorize('admin'), NewsController.forceRefresh);
 router.get('/news/admin/stats', authenticate, authorize('admin'), NewsController.getFetchStats);
 
+router.delete('/news/admin/clean-news', authenticate, authorize('admin'), NewsController.cleanNewsNow);
+router.delete('/news/admin/clean-history', authenticate, authorize('admin'), NewsController.cleanHistoryNow);
 export default router;

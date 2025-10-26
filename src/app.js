@@ -4,6 +4,7 @@ import session from 'express-session';
 import passport from './config/passport.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import newsRoutes from './routes/newsRoutes.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { securityHeaders, apiLimiter } from './middlewares/security.js';
 import cookieParser from 'cookie-parser';

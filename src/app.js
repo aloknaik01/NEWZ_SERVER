@@ -7,6 +7,8 @@ import userRoutes from './routes/userRoutes.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { securityHeaders, apiLimiter } from './middlewares/security.js';
 import cookieParser from 'cookie-parser';
+
+
 const app = express();
 
 // Security headers
@@ -58,6 +60,7 @@ app.use('/api', apiLimiter);
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api', newsRoutes);
 
 // Error handlers
 app.use(notFound);

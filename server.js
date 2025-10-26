@@ -4,6 +4,8 @@ import pool from './src/config/database.js';
 import { createAllTables } from './src/database/schema.js';
 import { testEmailConnection } from './src/utils/emailService.js';
 import { startCleanupService } from './src/services/cleanupService.js';
+import { createNewsArticlesTables } from './src/database/newsSchema.js';
+import { startNewsSyncCron } from './src/services/newsCronService.js';
 
 dotenv.config();
 
@@ -12,28 +14,34 @@ const PORT = process.env.PORT || 5000;
 // Initialize application
 async function initializeApp() {
   try {
-    console.log('🚀 Starting server initialization...\n');
+    console.log('Starting server initialization...\n');
 
     // 1. Test database connection
     await pool.query('SELECT NOW()');
-    console.log('✅ Database connection successful');
+    console.log('Database connection successful');
 
     // 2. Create/update tables
     await createAllTables();
 
-    // 3. Test email service
+    // 3. Create/update news tables
+    await createNewsArticlesTables();
+
+    // 4. Test email service
     const emailReady = await testEmailConnection();
     if (!emailReady) {
-      console.warn('⚠️  Email service not configured. Some features may not work.');
+      console.warn('Email service not configured. Some features may not work.');
     }
 
-    // 4. Start cleanup service
+    // 5. Start cleanup service
     startCleanupService();
 
-    console.log('\n✅ Application initialized successfully\n');
+    // 6. Start news sync cron 
+    startNewsSyncCron();
+
+    console.log('\n Application initialized successfully\n');
     return true;
   } catch (error) {
-    console.error('❌ Application initialization failed:', error);
+    console.error('Application initialization failed:', error);
     return false;
   }
 }

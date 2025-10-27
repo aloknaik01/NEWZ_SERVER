@@ -6,7 +6,7 @@ import { testEmailConnection } from './src/utils/emailService.js';
 import { startCleanupService } from './src/services/cleanupService.js';
 import { createNewsArticlesTables } from './src/database/newsSchema.js';
 import { startNewsSyncCron } from './src/services/newsCronService.js';
-import NewsCleanupService from './src/services/newsCleanupService.js';
+// import NewsCleanupService from './src/services/newsCleanupService.js';
 
 
 dotenv.config();
@@ -41,10 +41,10 @@ async function initializeApp() {
     startNewsSyncCron();
 
     //7. News article every day at 12:00 am
-    NewsCleanupService.startDailyNewsCleanup();
+    // NewsCleanupService.startDailyNewsCleanup();
 
-    //7. News article Artice every Month 1st day at 12:00 am
-    NewsCleanupService.startMonthlyHistoryCleanup();
+    // //7. News article Artice every Month 1st day at 12:00 am
+    // NewsCleanupService.startMonthlyHistoryCleanup();
 
 
     console.log('\n Application initialized successfully\n');
@@ -71,9 +71,7 @@ async function startServer() {
     console.log(`Health check: http://localhost:${PORT}/health`);
     console.log(`Email service: ${process.env.EMAIL_USER ? 'Configured' : 'Not configured'}`);
     console.log(`News Cron: Every 30 minutes  `);
-    console.log(`News Cleanup: Daily at 12:00 AM `);
-    console.log(`History Cleanup: Monthly 1st 12:01 AM `);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
   });
 }
 

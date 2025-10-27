@@ -1,13 +1,13 @@
 import pool from '../config/database.js';
 
 export async function createNewsArticlesTables() {
-    const client = await pool.connect();
+  const client = await pool.connect();
 
-    try {
-        await client.query('BEGIN');
+  try {
+    await client.query('BEGIN');
 
-        // 1. News Articles Table
-        await client.query(`
+    // 1. News Articles Table
+    await client.query(`
       CREATE TABLE IF NOT EXISTS news_articles (
         id SERIAL PRIMARY KEY,
         article_id VARCHAR(100) UNIQUE NOT NULL,
@@ -59,8 +59,8 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_news_active ON news_articles(is_active, category, pub_date DESC);
     `);
 
-        // 2. News Fetch Tracking
-        await client.query(`
+    // 2. News Fetch Tracking
+    await client.query(`
       CREATE TABLE IF NOT EXISTS news_fetch_tracking (
         id SERIAL PRIMARY KEY,
         category VARCHAR(50) UNIQUE NOT NULL,
@@ -79,8 +79,8 @@ export async function createNewsArticlesTables() {
       ON CONFLICT (category) DO NOTHING;
     `);
 
-        // 3. Fetch Logs
-        await client.query(`
+    // 3. Fetch Logs
+    await client.query(`
       CREATE TABLE IF NOT EXISTS news_fetch_logs (
         id SERIAL PRIMARY KEY,
         category VARCHAR(50),
@@ -96,12 +96,15 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_logs_category_date ON news_fetch_logs(category, fetched_at DESC);
     `);
 
-        // 4. Reading History (UPDATED - integrates with existing users)
-        await client.query(`
+    // 4. Reading History (UPDATED - integrates with existing users)
+    await client.query(`
       CREATE TABLE IF NOT EXISTS reading_history (
         id SERIAL PRIMARY KEY,
         user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-        news_article_id INT REFERENCES news_articles(id) ON DELETE CASCADE,
+        news_article_id INT REFERENCES news_articles(id) ON DELETE SET NULL,
+        article_title TEXT,
+        article_category VARCHAR(50),
+        article_image_url TEXT,
         started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMP,
         time_spent INT DEFAULT 0,
@@ -115,8 +118,8 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_reading_user_article_date ON reading_history(user_id, news_article_id, reading_date);
     `);
 
-        // 5. Daily Reading Stats
-        await client.query(`
+    // 5. Daily Reading Stats
+    await client.query(`
       CREATE TABLE IF NOT EXISTS daily_reading_stats (
         id SERIAL PRIMARY KEY,
         user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
@@ -129,8 +132,8 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_daily_stats_user_date ON daily_reading_stats(user_id, reading_date);
     `);
 
-        // 6. Coin Transactions (if not exists)
-        await client.query(`
+    // 6. Coin Transactions (if not exists)
+    await client.query(`
       CREATE TABLE IF NOT EXISTS coin_transactions (
         id SERIAL PRIMARY KEY,
         user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
@@ -145,21 +148,21 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_transactions_user ON coin_transactions(user_id, created_at DESC);
     `);
 
-        // 7. Update user_profiles table (add streak columns if not exist)
-        await client.query(`
+    // 7. Update user_profiles table (add streak columns if not exist)
+    await client.query(`
       ALTER TABLE user_profiles 
       ADD COLUMN IF NOT EXISTS current_streak INT DEFAULT 0,
       ADD COLUMN IF NOT EXISTS longest_streak INT DEFAULT 0;
     `);
 
-        await client.query('COMMIT');
-        console.log('News tables created successfully');
+    await client.query('COMMIT');
+    console.log('News tables created successfully');
 
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error creating news tables:', error);
-        throw error;
-    } finally {
-        client.release();
-    }
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error creating news tables:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
 }

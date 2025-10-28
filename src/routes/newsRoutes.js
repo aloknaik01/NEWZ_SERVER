@@ -7,6 +7,7 @@ const router = express.Router();
 
 // Public routes
 router.get('/news', NewsController.getNews);
+router.get('/news/db', NewsController.getNewsFromDB);
 router.get('/news/:articleId', NewsController.getArticle);
 
 // Protected routes (require login)

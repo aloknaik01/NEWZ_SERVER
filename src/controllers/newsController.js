@@ -352,12 +352,12 @@ class NewsController {
         [userId]
       );
 
-        return successResponse(res, 200, 'User stats fetched successfully', {
-      wallet: wallet.rows[0] || { available_coins: 0, total_earned: 0 },
-      profile: profile.rows[0] || { total_articles_read: 0, current_streak: 0, longest_streak: 0 },
-      today: todayStats.rows[0] || { articles_read: 0, coins_earned: 0 },
-      recentReading: recentReading.rows
-    });
+      return successResponse(res, 200, 'User stats fetched successfully', {
+        wallet: wallet.rows[0] || { available_coins: 0, total_earned: 0 },
+        profile: profile.rows[0] || { total_articles_read: 0, current_streak: 0, longest_streak: 0 },
+        today: todayStats.rows[0] || { articles_read: 0, coins_earned: 0 },
+        recentReading: recentReading.rows
+      });
 
     } catch (error) {
       console.error('Get stats error:', error);
@@ -420,6 +420,104 @@ class NewsController {
     } catch (error) {
       console.error('Get stats error:', error);
       return errorResponse(res, 500, 'Failed to fetch stats');
+    }
+  }
+
+
+  static async getNewsFromDB(req, res) {
+    try {
+      const {
+        page = 1,
+        limit = 10,
+        category = 'all',
+        page: nextPageToken = null
+      } = req.query;
+
+
+      const pageNum = nextPageToken ?
+        parseInt(nextPageToken) || 1 :
+        (parseInt(page) || 1);
+
+      const limitNum = parseInt(limit) || 10;
+
+      const offset = (pageNum - 1) * limitNum;
+
+      let whereConditions = ['is_active = true'];
+      let values = [];
+      let paramCount = 1;
+
+      
+      // "All" CATEGORY UPDATE:
+      if (category === 'all' || category === 'All') {
+        // ✅ "All" tab internally YEH CATEGORIES use karega
+        whereConditions.push(`category IN (
+    'sports', 'entertainment', 'politics', 'crime', 'food', 'tourism'
+  )`);
+      } else {
+        // Specific category
+        whereConditions.push(`category = $${paramCount}`);
+        values.push(category.toLowerCase());
+        paramCount++;
+      }
+
+      const whereClause = whereConditions.join(' AND ');
+
+      // Total count
+      const countResult = await pool.query(
+        `SELECT COUNT(*) as total 
+       FROM news_articles 
+       WHERE ${whereClause}`,
+        values
+      );
+
+      const totalArticles = parseInt(countResult.rows[0].total);
+
+
+      const result = await pool.query(
+        `SELECT 
+        article_id, title, description, link, 
+        image_url, video_url,
+        source_name, source_icon, creator, 
+        category, keywords, pub_date,
+        view_count, read_count, coins_reward
+      FROM news_articles
+      WHERE ${whereClause}
+      ORDER BY pub_date DESC
+      LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
+        [...values, limitNum, offset]
+      );
+
+      const hasMore = offset + result.rows.length < totalArticles;
+      const nextPage = hasMore ? pageNum + 1 : null;
+
+      // Format articles for frontend
+      const formattedArticles = result.rows.map(article => ({
+        article_id: article.article_id,
+        title: article.title,
+        description: article.description,
+        link: article.link,
+        image_url: article.image_url,
+        video_url: article.video_url,
+        source_name: article.source_name,
+        source_icon: article.source_icon,
+        creator: typeof article.creator === 'string' ? JSON.parse(article.creator) : article.creator,
+        category: typeof article.category === 'string' ? [article.category] : article.category,
+        keywords: typeof article.keywords === 'string' ? JSON.parse(article.keywords) : article.keywords,
+        pubDate: article.pub_date,
+        content: article.description,
+        country: ['in'],
+        language: 'english'
+      }));
+
+      return successResponse(res, 200, 'News fetched successfully', {
+        results: formattedArticles,
+        nextPage: nextPage,
+        totalResults: totalArticles
+      });
+
+    } catch (error) {
+      console.error('Get news from DB error:', error);
+      return errorResponse(res, 500, 'Failed to fetch news');
     }
   }
 }

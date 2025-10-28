@@ -35,7 +35,7 @@ class NewsService {
             const params = {
                 apikey: apiKey,
                 country: 'in',
-                language: 'en',
+                excludelanguage: 'en',
                 timezone: 'Asia/Kolkata',
                 image: 1,
                 removeduplicate: 1,
@@ -250,18 +250,19 @@ class NewsService {
 
     static async syncAllCategories() {
         console.log('\n ===== SYNCING ALL CATEGORIES =====');
-        console.log(`⏰ Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
 
-        const categories = [
-            'all',
-            'sports',
-            'politics',
-            'technology',
-            'business',
-            'entertainment',
-            'health',
-            'crime'
+        // ✅ "All" ke liye YEH CATEGORIES (internal use only)
+        const allCategories = [
+            'sports', 'entertainment', 'politics', 'crime', 'food', 'tourism'
         ];
+
+        // ✅ UI ke liye YEH CATEGORIES (frontend show)
+        const uiCategories = [
+            'lifestyle', 'health', 'world', 'education', 'business', 'technology'
+        ];
+
+        // ✅ Dono sync karo
+        const categories = [...allCategories, ...uiCategories];
 
         const results = {
             total: 0,
@@ -279,15 +280,12 @@ class NewsService {
 
                 if (articles.length > 0) {
                     const saveResult = await this.saveArticles(articles, category);
-
                     results.total += articles.length;
                     results.saved += saveResult.saved || 0;
                     results.skipped += saveResult.skipped || 0;
 
                     const cleaned = await this.cleanOldArticles(category, 100);
                     results.cleaned += cleaned;
-                } else {
-                    console.log(`No articles fetched for ${category}`);
                 }
 
                 await new Promise(resolve => setTimeout(resolve, 3000));
@@ -299,8 +297,6 @@ class NewsService {
         }
 
         console.log('\n ===== SYNC COMPLETED =====');
-        console.log(`Total: ${results.total}, Saved: ${results.saved}, Skipped: ${results.skipped}, Cleaned: ${results.cleaned}`);
-
         return results;
     }
 }

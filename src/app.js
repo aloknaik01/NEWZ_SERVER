@@ -4,7 +4,7 @@ import session from 'express-session';
 import passport from './config/passport.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
-// import newsRoutes from './routes/newsRoutes.js';
+import newsRoutes from './routes/newsRoutes.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { securityHeaders, apiLimiter } from './middlewares/security.js';
 import cookieParser from 'cookie-parser';
@@ -56,12 +56,12 @@ app.get('/health', (req, res) => {
 });
 
 // API rate limiting
-app.use('/api', apiLimiter);
+// app.use('/api', apiLimiter);
 
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
-// app.use('/api', newsRoutes);
+app.use('/api', newsRoutes);
 
 // Error handlers
 app.use(notFound);

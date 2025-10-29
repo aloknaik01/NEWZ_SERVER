@@ -97,26 +97,37 @@ export async function createNewsArticlesTables() {
     `);
 
     // 4. Reading History (UPDATED - integrates with existing users)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS reading_history (
-        id SERIAL PRIMARY KEY,
-        user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-        news_article_id INT REFERENCES news_articles(id) ON DELETE SET NULL,
-        article_title TEXT,
-        article_category VARCHAR(50),
-        article_image_url TEXT,
-        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        completed_at TIMESTAMP,
-        time_spent INT DEFAULT 0,
-        coins_earned INT DEFAULT 0,
-        is_completed BOOLEAN DEFAULT false,
-        reading_date DATE DEFAULT CURRENT_DATE
-      );
 
-      CREATE INDEX IF NOT EXISTS idx_reading_user_date ON reading_history(user_id, reading_date);
-      CREATE INDEX IF NOT EXISTS idx_reading_article ON reading_history(news_article_id);
-      CREATE INDEX IF NOT EXISTS idx_reading_user_article_date ON reading_history(user_id, news_article_id, reading_date);
-    `);
+    // Replace the reading_history table creation with this:
+
+    // 4. Reading History (with complete article data storage)
+    await client.query(`
+  CREATE TABLE IF NOT EXISTS reading_history (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+    news_article_id INT REFERENCES news_articles(id) ON DELETE SET NULL,
+    
+    -- Stored article data (persists even after article deletion)
+    article_title TEXT NOT NULL,
+    article_category VARCHAR(50),
+    article_image_url TEXT,
+    article_description TEXT,
+    article_link TEXT,
+    article_source VARCHAR(200),
+    
+    -- Reading metrics
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    time_spent INT DEFAULT 0,
+    coins_earned INT DEFAULT 0,
+    is_completed BOOLEAN DEFAULT false,
+    reading_date DATE DEFAULT CURRENT_DATE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_reading_user_date ON reading_history(user_id, reading_date DESC);
+  CREATE INDEX IF NOT EXISTS idx_reading_article ON reading_history(news_article_id);
+  CREATE INDEX IF NOT EXISTS idx_reading_user_article_date ON reading_history(user_id, news_article_id, reading_date);
+`);
 
     // 5. Daily Reading Stats
     await client.query(`

@@ -92,6 +92,7 @@ class NewsController {
   }
 
   // Track reading and reward coins
+
   static async trackReading(req, res) {
     try {
       const { articleId } = req.params;
@@ -102,10 +103,12 @@ class NewsController {
         return errorResponse(res, 400, 'Invalid time spent');
       }
 
+      // Fetch complete article details
       const article = await pool.query(
-        `SELECT id, article_id, title, coins_reward, category 
-         FROM news_articles 
-         WHERE article_id = $1 AND is_active = true`,
+        `SELECT id, article_id, title, coins_reward, category, 
+              description, image_url, source_name, link
+       FROM news_articles 
+       WHERE article_id = $1 AND is_active = true`,
         [articleId]
       );
 
@@ -117,11 +120,12 @@ class NewsController {
       const minReadTime = 30;
       const coinsReward = articleData.coins_reward;
 
+      // Check if already read today
       const alreadyRead = await pool.query(
         `SELECT id FROM reading_history 
-         WHERE user_id = $1 
-         AND news_article_id = $2 
-         AND reading_date = CURRENT_DATE`,
+       WHERE user_id = $1 
+       AND news_article_id = $2 
+       AND reading_date = CURRENT_DATE`,
         [userId, articleData.id]
       );
 
@@ -129,9 +133,10 @@ class NewsController {
         return errorResponse(res, 400, 'You already read this article today');
       }
 
+      // Check daily limit
       const dailyStats = await pool.query(
         `SELECT articles_read FROM daily_reading_stats 
-         WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
+       WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
         [userId]
       );
 
@@ -145,43 +150,50 @@ class NewsController {
 
       await pool.query('BEGIN');
 
+      // ✅ Store complete article data in history (so it persists even after article deletion)
       await pool.query(
         `INSERT INTO reading_history (
-    user_id, news_article_id, 
-    article_title, article_category, article_image_url,  -- ✅ NEW
-    completed_at, time_spent, coins_earned, is_completed, reading_date
-  ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, CURRENT_DATE)`,
+        user_id, news_article_id, 
+        article_title, article_category, article_image_url,
+        article_description, article_link, article_source,
+        completed_at, time_spent, coins_earned, is_completed, reading_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, CURRENT_DATE)`,
         [
           userId,
           articleData.id,
           articleData.title,
           articleData.category,
-          article.rows[0].image_url || null,
+          articleData.image_url || null,
+          articleData.description || null,
+          articleData.link || null,
+          articleData.source_name || null,
           timeSpent,
           coinsEarned,
           timeSpent >= minReadTime
         ]
       );
 
+      // Update article read count
       await pool.query(
         'UPDATE news_articles SET read_count = read_count + 1 WHERE id = $1',
         [articleData.id]
       );
 
+      // Award coins if earned
       if (coinsEarned > 0) {
         await pool.query(
           `INSERT INTO user_wallets (user_id, available_coins, total_earned)
-           VALUES ($1, 0, 0)
-           ON CONFLICT (user_id) DO NOTHING`,
+         VALUES ($1, 0, 0)
+         ON CONFLICT (user_id) DO NOTHING`,
           [userId]
         );
 
         await pool.query(
           `UPDATE user_wallets 
-           SET available_coins = available_coins + $2,
-               total_earned = total_earned + $2,
-               updated_at = NOW()
-           WHERE user_id = $1`,
+         SET available_coins = available_coins + $2,
+             total_earned = total_earned + $2,
+             updated_at = NOW()
+         WHERE user_id = $1`,
           [userId, coinsEarned]
         );
 
@@ -194,30 +206,32 @@ class NewsController {
 
         await pool.query(
           `INSERT INTO coin_transactions (
-            user_id, transaction_type, amount, balance_after, source, description
-          ) VALUES ($1, 'earned', $2, $3, 'article_read', $4)`,
+          user_id, transaction_type, amount, balance_after, source, description
+        ) VALUES ($1, 'earned', $2, $3, 'article_read', $4)`,
           [userId, coinsEarned, balanceAfter, `Read: ${articleData.title.substring(0, 50)}...`]
         );
 
         await pool.query(
           `UPDATE user_profiles 
-           SET total_articles_read = total_articles_read + 1,
-               updated_at = NOW()
-           WHERE user_id = $1`,
+         SET total_articles_read = total_articles_read + 1,
+             updated_at = NOW()
+         WHERE user_id = $1`,
           [userId]
         );
       }
 
+      // Update daily stats
       await pool.query(
         `INSERT INTO daily_reading_stats (user_id, reading_date, articles_read, coins_earned)
-         VALUES ($1, CURRENT_DATE, 1, $2)
-         ON CONFLICT (user_id, reading_date) 
-         DO UPDATE SET 
-           articles_read = daily_reading_stats.articles_read + 1,
-           coins_earned = daily_reading_stats.coins_earned + $2`,
+       VALUES ($1, CURRENT_DATE, 1, $2)
+       ON CONFLICT (user_id, reading_date) 
+       DO UPDATE SET 
+         articles_read = daily_reading_stats.articles_read + 1,
+         coins_earned = daily_reading_stats.coins_earned + $2`,
         [userId, coinsEarned]
       );
 
+      // Check streak bonus
       const streakBonus = await NewsController.checkDailyStreak(userId);
 
       await pool.query('COMMIT');
@@ -225,7 +239,7 @@ class NewsController {
       return successResponse(res, 200,
         coinsEarned > 0
           ? `🎉 You earned ${coinsEarned} coins!`
-          : `⏱️ Read for at least ${minReadTime} seconds to earn coins`,
+          : `⏱Read for at least ${minReadTime} seconds to earn coins`,
         {
           coinsEarned,
           timeSpent,
@@ -315,55 +329,92 @@ class NewsController {
   }
 
   // Get user reading stats (keep this)
-  static async getUserStats(req, res) {
-    try {
-      const userId = req.user.userId;
 
-      const wallet = await pool.query(
-        'SELECT * FROM user_wallets WHERE user_id = $1',
-        [userId]
-      );
+static async getUserStats(req, res) {
+  try {
+    const userId = req.user.userId;
 
-      const profile = await pool.query(
-        'SELECT total_articles_read, current_streak, longest_streak FROM user_profiles WHERE user_id = $1',
-        [userId]
-      );
+    // Get wallet info
+    const wallet = await pool.query(
+      'SELECT * FROM user_wallets WHERE user_id = $1',
+      [userId]
+    );
 
-      const todayStats = await pool.query(
-        `SELECT * FROM daily_reading_stats 
-         WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
-        [userId]
-      );
+    // Get profile stats
+    const profile = await pool.query(
+      'SELECT total_articles_read, current_streak, longest_streak FROM user_profiles WHERE user_id = $1',
+      [userId]
+    );
 
-      const recentReading = await pool.query(
-        `SELECT 
-        rh.id, 
-        rh.time_spent, 
-        rh.coins_earned, 
-        rh.reading_date,
-        COALESCE(rh.article_title, 'Article Deleted') as title,       
-        COALESCE(rh.article_image_url, na.image_url) as image_url,     
-        COALESCE(rh.article_category, na.category, 'general') as category
-       FROM reading_history rh
-       LEFT JOIN news_articles na ON rh.news_article_id = na.id      
-       WHERE rh.user_id = $1
-       ORDER BY rh.started_at DESC
-       LIMIT 10`,
-        [userId]
-      );
+    // Get today's stats
+    const todayStats = await pool.query(
+      `SELECT * FROM daily_reading_stats 
+       WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
+      [userId]
+    );
 
-      return successResponse(res, 200, 'User stats fetched successfully', {
-        wallet: wallet.rows[0] || { available_coins: 0, total_earned: 0 },
-        profile: profile.rows[0] || { total_articles_read: 0, current_streak: 0, longest_streak: 0 },
-        today: todayStats.rows[0] || { articles_read: 0, coins_earned: 0 },
-        recentReading: recentReading.rows
-      });
+    // ✅ Get reading history with stored article data (no JOIN needed!)
+    const recentReading = await pool.query(
+      `SELECT 
+        id,
+        time_spent,
+        coins_earned,
+        reading_date,
+        started_at,
+        completed_at,
+        article_title as title,
+        article_image_url as image_url,
+        article_category as category,
+        article_description as description,
+        article_link as link,
+        article_source as source
+       FROM reading_history
+       WHERE user_id = $1
+       ORDER BY started_at DESC
+       LIMIT 20`,
+      [userId]
+    );
 
-    } catch (error) {
-      console.error('Get stats error:', error);
-      return errorResponse(res, 500, 'Failed to fetch stats');
-    }
+    // Format the reading history
+    const formattedHistory = recentReading.rows.map(item => ({
+      id: item.id,
+      title: item.title || 'Article Unavailable',
+      image_url: item.image_url || 'https://via.placeholder.com/300x200?text=No+Image',
+      category: item.category || 'general',
+      description: item.description || '',
+      link: item.link || '#',
+      source: item.source || 'Unknown',
+      time_spent: item.time_spent,
+      coins_earned: item.coins_earned,
+      reading_date: item.reading_date,
+      started_at: item.started_at,
+      completed_at: item.completed_at
+    }));
+
+    return successResponse(res, 200, 'User stats fetched successfully', {
+      wallet: wallet.rows[0] || { 
+        available_coins: 0, 
+        total_earned: 0,
+        total_redeemed: 0,
+        referral_earnings: 0
+      },
+      profile: profile.rows[0] || { 
+        total_articles_read: 0, 
+        current_streak: 0, 
+        longest_streak: 0 
+      },
+      today: todayStats.rows[0] || { 
+        articles_read: 0, 
+        coins_earned: 0 
+      },
+      recentReading: formattedHistory
+    });
+
+  } catch (error) {
+    console.error('Get stats error:', error);
+    return errorResponse(res, 500, 'Failed to fetch stats');
   }
+}
 
   // Force refresh (Admin only) - keep this
   static async forceRefresh(req, res) {
@@ -446,7 +497,7 @@ class NewsController {
       let values = [];
       let paramCount = 1;
 
-      
+
       // "All" CATEGORY UPDATE:
       if (category === 'all' || category === 'All') {
         // ✅ "All" tab internally YEH CATEGORIES use karega

@@ -30,7 +30,7 @@ router.post('/logout', AuthController.logout);
 // Google OAuth Routes
 router.post('/google/token', async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     const { googleAccessToken, email, name, googleId, profileImage } = req.body;
 

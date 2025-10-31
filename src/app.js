@@ -17,7 +17,7 @@ app.use(securityHeaders);
 
 // CORS
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://10.37.147.108:5000',
+  origin: process.env.CLIENT_URL || 'http://10.184.105.108:5000',
   credentials: true
 }));
 

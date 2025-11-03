@@ -1,3 +1,4 @@
+// src/controllers/newsController.js
 import pool from '../config/database.js';
 import NewsService from '../services/newsService.js';
 import { successResponse, errorResponse } from '../utils/responseHandler.js';
@@ -91,8 +92,7 @@ class NewsController {
     }
   }
 
-  // Track reading and reward coins
-
+  // ✅ Track reading - UNLIMITED (No daily limit)
   static async trackReading(req, res) {
     try {
       const { articleId } = req.params;
@@ -106,9 +106,9 @@ class NewsController {
       // Fetch complete article details
       const article = await pool.query(
         `SELECT id, article_id, title, coins_reward, category, 
-              description, image_url, source_name, link
-       FROM news_articles 
-       WHERE article_id = $1 AND is_active = true`,
+                description, image_url, source_name, link
+         FROM news_articles 
+         WHERE article_id = $1 AND is_active = true`,
         [articleId]
       );
 
@@ -120,12 +120,12 @@ class NewsController {
       const minReadTime = 30;
       const coinsReward = articleData.coins_reward;
 
-      // Check if already read today
+      // ✅ Check if already read today - REMOVED DAILY LIMIT CHECK
       const alreadyRead = await pool.query(
         `SELECT id FROM reading_history 
-       WHERE user_id = $1 
-       AND news_article_id = $2 
-       AND reading_date = CURRENT_DATE`,
+         WHERE user_id = $1 
+         AND news_article_id = $2 
+         AND reading_date = CURRENT_DATE`,
         [userId, articleData.id]
       );
 
@@ -133,31 +133,19 @@ class NewsController {
         return errorResponse(res, 400, 'You already read this article today');
       }
 
-      // Check daily limit
-      const dailyStats = await pool.query(
-        `SELECT articles_read FROM daily_reading_stats 
-       WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
-        [userId]
-      );
-
-      const articlesReadToday = dailyStats.rows[0]?.articles_read || 0;
-
-      if (articlesReadToday >= 50) {
-        return errorResponse(res, 400, 'Daily reading limit reached (50 articles)');
-      }
-
+      // ✅ REMOVED DAILY LIMIT CHECK - Unlimited reading
       const coinsEarned = timeSpent >= minReadTime ? coinsReward : 0;
 
       await pool.query('BEGIN');
 
-      // ✅ Store complete article data in history (so it persists even after article deletion)
+      // Store complete article data in history
       await pool.query(
         `INSERT INTO reading_history (
-        user_id, news_article_id, 
-        article_title, article_category, article_image_url,
-        article_description, article_link, article_source,
-        completed_at, time_spent, coins_earned, is_completed, reading_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, CURRENT_DATE)`,
+          user_id, news_article_id, 
+          article_title, article_category, article_image_url,
+          article_description, article_link, article_source,
+          completed_at, time_spent, coins_earned, is_completed, reading_date
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, CURRENT_DATE)`,
         [
           userId,
           articleData.id,
@@ -183,17 +171,17 @@ class NewsController {
       if (coinsEarned > 0) {
         await pool.query(
           `INSERT INTO user_wallets (user_id, available_coins, total_earned)
-         VALUES ($1, 0, 0)
-         ON CONFLICT (user_id) DO NOTHING`,
+           VALUES ($1, 0, 0)
+           ON CONFLICT (user_id) DO NOTHING`,
           [userId]
         );
 
         await pool.query(
           `UPDATE user_wallets 
-         SET available_coins = available_coins + $2,
-             total_earned = total_earned + $2,
-             updated_at = NOW()
-         WHERE user_id = $1`,
+           SET available_coins = available_coins + $2,
+               total_earned = total_earned + $2,
+               updated_at = NOW()
+           WHERE user_id = $1`,
           [userId, coinsEarned]
         );
 
@@ -206,30 +194,39 @@ class NewsController {
 
         await pool.query(
           `INSERT INTO coin_transactions (
-          user_id, transaction_type, amount, balance_after, source, description
-        ) VALUES ($1, 'earned', $2, $3, 'article_read', $4)`,
+            user_id, transaction_type, amount, balance_after, source, description
+          ) VALUES ($1, 'earned', $2, $3, 'article_read', $4)`,
           [userId, coinsEarned, balanceAfter, `Read: ${articleData.title.substring(0, 50)}...`]
         );
 
         await pool.query(
           `UPDATE user_profiles 
-         SET total_articles_read = total_articles_read + 1,
-             updated_at = NOW()
-         WHERE user_id = $1`,
+           SET total_articles_read = total_articles_read + 1,
+               updated_at = NOW()
+           WHERE user_id = $1`,
           [userId]
         );
       }
 
-      // Update daily stats
+      // Update daily stats (for streak tracking only)
       await pool.query(
         `INSERT INTO daily_reading_stats (user_id, reading_date, articles_read, coins_earned)
-       VALUES ($1, CURRENT_DATE, 1, $2)
-       ON CONFLICT (user_id, reading_date) 
-       DO UPDATE SET 
-         articles_read = daily_reading_stats.articles_read + 1,
-         coins_earned = daily_reading_stats.coins_earned + $2`,
+         VALUES ($1, CURRENT_DATE, 1, $2)
+         ON CONFLICT (user_id, reading_date) 
+         DO UPDATE SET 
+           articles_read = daily_reading_stats.articles_read + 1,
+           coins_earned = daily_reading_stats.coins_earned + $2`,
         [userId, coinsEarned]
       );
+
+      // Get today's count for response
+      const todayCount = await pool.query(
+        `SELECT articles_read FROM daily_reading_stats 
+         WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
+        [userId]
+      );
+
+      const articlesReadToday = todayCount.rows[0]?.articles_read || 0;
 
       // Check streak bonus
       const streakBonus = await NewsController.checkDailyStreak(userId);
@@ -239,13 +236,13 @@ class NewsController {
       return successResponse(res, 200,
         coinsEarned > 0
           ? `🎉 You earned ${coinsEarned} coins!`
-          : `⏱Read for at least ${minReadTime} seconds to earn coins`,
+          : `⏱️ Read for at least ${minReadTime} seconds to earn coins`,
         {
           coinsEarned,
           timeSpent,
           minTimeRequired: minReadTime,
-          articlesReadToday: articlesReadToday + 1,
-          dailyLimit: 50,
+          articlesReadToday: articlesReadToday,
+          isUnlimited: true, // ✅ Flag to show unlimited
           streakBonus: streakBonus || 0
         }
       );
@@ -257,7 +254,7 @@ class NewsController {
     }
   }
 
-  // Check daily streak (keep this)
+  // Check daily streak
   static async checkDailyStreak(userId) {
     try {
       const streakData = await pool.query(
@@ -328,95 +325,89 @@ class NewsController {
     }
   }
 
-  // Get user reading stats (keep this)
+  // Get user stats
+  static async getUserStats(req, res) {
+    try {
+      const userId = req.user.userId;
 
-static async getUserStats(req, res) {
-  try {
-    const userId = req.user.userId;
+      const wallet = await pool.query(
+        'SELECT * FROM user_wallets WHERE user_id = $1',
+        [userId]
+      );
 
-    // Get wallet info
-    const wallet = await pool.query(
-      'SELECT * FROM user_wallets WHERE user_id = $1',
-      [userId]
-    );
+      const profile = await pool.query(
+        'SELECT total_articles_read, current_streak, longest_streak FROM user_profiles WHERE user_id = $1',
+        [userId]
+      );
 
-    // Get profile stats
-    const profile = await pool.query(
-      'SELECT total_articles_read, current_streak, longest_streak FROM user_profiles WHERE user_id = $1',
-      [userId]
-    );
+      const todayStats = await pool.query(
+        `SELECT * FROM daily_reading_stats 
+         WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
+        [userId]
+      );
 
-    // Get today's stats
-    const todayStats = await pool.query(
-      `SELECT * FROM daily_reading_stats 
-       WHERE user_id = $1 AND reading_date = CURRENT_DATE`,
-      [userId]
-    );
+      const recentReading = await pool.query(
+        `SELECT 
+          id,
+          time_spent,
+          coins_earned,
+          reading_date,
+          started_at,
+          completed_at,
+          article_title,
+          article_image_url,
+          article_category,
+          article_description,
+          article_link,
+          article_source
+         FROM reading_history
+         WHERE user_id = $1
+         ORDER BY started_at DESC
+         LIMIT 20`,
+        [userId]
+      );
 
-    // ✅ Get reading history with stored article data (no JOIN needed!)
-    const recentReading = await pool.query(
-      `SELECT 
-        id,
-        time_spent,
-        coins_earned,
-        reading_date,
-        started_at,
-        completed_at,
-        article_title as title,
-        article_image_url as image_url,
-        article_category as category,
-        article_description as description,
-        article_link as link,
-        article_source as source
-       FROM reading_history
-       WHERE user_id = $1
-       ORDER BY started_at DESC
-       LIMIT 20`,
-      [userId]
-    );
+      const formattedHistory = recentReading.rows.map(item => ({
+        id: item.id,
+        title: item.article_title || 'Article Unavailable',
+        image_url: item.article_image_url || null,
+        category: item.article_category || 'general',
+        description: item.article_description || '',
+        link: item.article_link || '#',
+        source: item.article_source || 'Unknown',
+        time_spent: item.time_spent,
+        coins_earned: item.coins_earned,
+        reading_date: item.reading_date,
+        started_at: item.started_at,
+        completed_at: item.completed_at
+      }));
 
-    // Format the reading history
-    const formattedHistory = recentReading.rows.map(item => ({
-      id: item.id,
-      title: item.title || 'Article Unavailable',
-      image_url: item.image_url || 'https://via.placeholder.com/300x200?text=No+Image',
-      category: item.category || 'general',
-      description: item.description || '',
-      link: item.link || '#',
-      source: item.source || 'Unknown',
-      time_spent: item.time_spent,
-      coins_earned: item.coins_earned,
-      reading_date: item.reading_date,
-      started_at: item.started_at,
-      completed_at: item.completed_at
-    }));
+      return successResponse(res, 200, 'User stats fetched successfully', {
+        wallet: wallet.rows[0] || { 
+          available_coins: 0, 
+          total_earned: 0,
+          total_redeemed: 0,
+          referral_earnings: 0
+        },
+        profile: profile.rows[0] || { 
+          total_articles_read: 0, 
+          current_streak: 0, 
+          longest_streak: 0 
+        },
+        today: todayStats.rows[0] || { 
+          articles_read: 0, 
+          coins_earned: 0 
+        },
+        recentReading: formattedHistory
+      });
 
-    return successResponse(res, 200, 'User stats fetched successfully', {
-      wallet: wallet.rows[0] || { 
-        available_coins: 0, 
-        total_earned: 0,
-        total_redeemed: 0,
-        referral_earnings: 0
-      },
-      profile: profile.rows[0] || { 
-        total_articles_read: 0, 
-        current_streak: 0, 
-        longest_streak: 0 
-      },
-      today: todayStats.rows[0] || { 
-        articles_read: 0, 
-        coins_earned: 0 
-      },
-      recentReading: formattedHistory
-    });
-
-  } catch (error) {
-    console.error('Get stats error:', error);
-    return errorResponse(res, 500, 'Failed to fetch stats');
+    } catch (error) {
+      console.error('Get stats error:', error);
+      return errorResponse(res, 500, 'Failed to fetch stats');
+    }
   }
-}
 
-  // Force refresh (Admin only) - keep this
+  // Force refresh (Admin only)
   static async forceRefresh(req, res) {
     try {
       const { category = 'all' } = req.body;
@@ -441,7 +432,7 @@ static async getUserStats(req, res) {
     }
   }
 
-  // Get fetch stats (Admin only) - keep this
+  // Get fetch stats (Admin only)
   static async getFetchStats(req, res) {
     try {
       const tracking = await pool.query(
@@ -474,7 +465,7 @@ static async getUserStats(req, res) {
     }
   }
 
-
+  // ✅ Get news from DB - EXCLUDE already read articles for current user
   static async getNewsFromDB(req, res) {
     try {
       const {
@@ -484,28 +475,38 @@ static async getUserStats(req, res) {
         page: nextPageToken = null
       } = req.query;
 
-
       const pageNum = nextPageToken ?
         parseInt(nextPageToken) || 1 :
         (parseInt(page) || 1);
 
       const limitNum = parseInt(limit) || 10;
-
       const offset = (pageNum - 1) * limitNum;
+
+      // ✅ Get userId from request (if authenticated)
+      const userId = req.user?.userId || null;
 
       let whereConditions = ['is_active = true'];
       let values = [];
       let paramCount = 1;
 
+      // ✅ Exclude articles user has already read today
+      if (userId) {
+        whereConditions.push(`id NOT IN (
+          SELECT news_article_id 
+          FROM reading_history 
+          WHERE user_id = $${paramCount} 
+          AND reading_date = CURRENT_DATE
+          AND news_article_id IS NOT NULL
+        )`);
+        values.push(userId);
+        paramCount++;
+      }
 
-      // "All" CATEGORY UPDATE:
       if (category === 'all' || category === 'All') {
-        // ✅ "All" tab internally YEH CATEGORIES use karega
         whereConditions.push(`category IN (
-    'sports', 'entertainment', 'politics', 'crime', 'food', 'tourism'
-  )`);
+          'sports', 'entertainment', 'politics', 'crime', 'food', 'tourism'
+        )`);
       } else {
-        // Specific category
         whereConditions.push(`category = $${paramCount}`);
         values.push(category.toLowerCase());
         paramCount++;
@@ -513,35 +514,32 @@ static async getUserStats(req, res) {
 
       const whereClause = whereConditions.join(' AND ');
 
-      // Total count
       const countResult = await pool.query(
         `SELECT COUNT(*) as total 
-       FROM news_articles 
-       WHERE ${whereClause}`,
+         FROM news_articles 
+         WHERE ${whereClause}`,
         values
       );
 
       const totalArticles = parseInt(countResult.rows[0].total);
 
-
       const result = await pool.query(
         `SELECT 
-        article_id, title, description, link, 
-        image_url, video_url,
-        source_name, source_icon, creator, 
-        category, keywords, pub_date,
-        view_count, read_count, coins_reward
-      FROM news_articles
-      WHERE ${whereClause}
-      ORDER BY pub_date DESC
-      LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
+          article_id, title, description, link, 
+          image_url, video_url,
+          source_name, source_icon, creator, 
+          category, keywords, pub_date,
+          view_count, read_count, coins_reward
+        FROM news_articles
+        WHERE ${whereClause}
+        ORDER BY pub_date DESC
+        LIMIT $${paramCount} OFFSET $${paramCount + 1}`,
         [...values, limitNum, offset]
       );
 
       const hasMore = offset + result.rows.length < totalArticles;
       const nextPage = hasMore ? pageNum + 1 : null;
 
-      // Format articles for frontend
       const formattedArticles = result.rows.map(article => ({
         article_id: article.article_id,
         title: article.title,
@@ -569,6 +567,70 @@ static async getUserStats(req, res) {
     } catch (error) {
       console.error('Get news from DB error:', error);
       return errorResponse(res, 500, 'Failed to fetch news');
+    }
+  }
+
+  // ✅ NEW: Get latest news from DB (for newsDetails page)
+  static async getLatestNews(req, res) {
+    try {
+      const { limit = 10, excludeId } = req.query;
+      const userId = req.user?.userId || null;
+
+      let whereConditions = ['is_active = true'];
+      let values = [];
+      let paramCount = 1;
+
+      // Exclude current article
+      if (excludeId) {
+        whereConditions.push(`article_id != $${paramCount}`);
+        values.push(excludeId);
+        paramCount++;
+      }
+
+      // ✅ Exclude articles user has already read today
+      if (userId) {
+        whereConditions.push(`id NOT IN (
+          SELECT news_article_id 
+          FROM reading_history 
+          WHERE user_id = $${paramCount} 
+          AND reading_date = CURRENT_DATE
+          AND news_article_id IS NOT NULL
+        )`);
+        values.push(userId);
+        paramCount++;
+      }
+
+      const whereClause = whereConditions.join(' AND ');
+
+      const result = await pool.query(
+        `SELECT 
+          article_id, title, description, link, 
+          image_url, source_name, category, pub_date
+        FROM news_articles
+        WHERE ${whereClause}
+        ORDER BY pub_date DESC
+        LIMIT $${paramCount}`,
+        [...values, parseInt(limit)]
+      );
+
+      const formattedArticles = result.rows.map(article => ({
+        article_id: article.article_id,
+        title: article.title,
+        description: article.description,
+        link: article.link,
+        image_url: article.image_url,
+        source_name: article.source_name,
+        category: typeof article.category === 'string' ? [article.category] : article.category,
+        pubDate: article.pub_date
+      }));
+
+      return successResponse(res, 200, 'Latest news fetched', {
+        results: formattedArticles
+      });
+
+    } catch (error) {
+      console.error('Get latest news error:', error);
+      return errorResponse(res, 500, 'Failed to fetch latest news');
     }
   }
 }

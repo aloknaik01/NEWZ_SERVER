@@ -23,72 +23,173 @@ export const testEmailConnection = async () => {
   }
 };
 
-// Send verification email
-export const sendVerificationEmail = async (email, userName, token) => {
+// ✅ NEW: Send 6-digit OTP email (sendVerificationOTP)
+export const sendVerificationOTP = async (email, userName, otp) => {
   try {
-    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
-
     const mailOptions = {
-      from: `"${process.env.APP_NAME || 'News Rewards'}" <${process.env.EMAIL_USER}>`,
+      from: `"${process.env.APP_NAME || 'NewsApp'}" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: '✉️ Verify Your Email',
+      subject: '🔐 Your Verification Code',
       html: `
         <!DOCTYPE html>
         <html>
         <head>
           <style>
-            body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
-            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            h2 { color: #333; margin-bottom: 20px; }
-            .button { display: inline-block; background: #4CAF50; color: white !important; padding: 14px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
-            .button:hover { background: #45a049; }
-            .info { background: #f9f9f9; padding: 15px; border-left: 4px solid #4CAF50; margin: 20px 0; }
-            .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px; }
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              margin: 0;
+              padding: 40px 20px;
+            }
+            .container { 
+              max-width: 600px;
+              margin: 0 auto;
+              background: white;
+              border-radius: 16px;
+              overflow: hidden;
+              box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }
+            .header {
+              background: linear-gradient(135deg, #FF4B2B 0%, #FF416C 100%);
+              padding: 40px 30px;
+              text-align: center;
+            }
+            .header h1 {
+              color: white;
+              margin: 0;
+              font-size: 28px;
+              font-weight: 700;
+            }
+            .header p {
+              color: rgba(255,255,255,0.9);
+              margin: 10px 0 0;
+              font-size: 16px;
+            }
+            .content {
+              padding: 40px 30px;
+              text-align: center;
+            }
+            .greeting {
+              font-size: 20px;
+              color: #333;
+              margin-bottom: 20px;
+              font-weight: 600;
+            }
+            .message {
+              font-size: 16px;
+              color: #666;
+              line-height: 1.6;
+              margin-bottom: 30px;
+            }
+            .otp-container {
+              background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+              border-radius: 12px;
+              padding: 30px;
+              margin: 30px 0;
+              border: 2px dashed #FF4B2B;
+            }
+            .otp-label {
+              font-size: 14px;
+              color: #666;
+              margin-bottom: 10px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              font-weight: 600;
+            }
+            .otp-code {
+              font-size: 48px;
+              font-weight: 700;
+              color: #FF4B2B;
+              letter-spacing: 8px;
+              font-family: 'Courier New', monospace;
+              margin: 10px 0;
+            }
+            .timer {
+              background: #fff3cd;
+              padding: 15px;
+              border-radius: 8px;
+              margin: 20px 0;
+              border-left: 4px solid #ffc107;
+            }
+            .timer-text {
+              color: #856404;
+              font-size: 14px;
+              font-weight: 600;
+              margin: 0;
+            }
+            .footer {
+              background: #f8f9fa;
+              padding: 30px;
+              text-align: center;
+              border-top: 1px solid #dee2e6;
+            }
+            .footer p {
+              color: #6c757d;
+              font-size: 14px;
+              margin: 5px 0;
+            }
+            .security-note {
+              background: #d1ecf1;
+              padding: 15px;
+              border-radius: 8px;
+              margin: 20px 0;
+              border-left: 4px solid #0c5460;
+            }
+            .security-text {
+              color: #0c5460;
+              font-size: 14px;
+              margin: 0;
+            }
           </style>
         </head>
         <body>
           <div class="container">
-            <h2>Welcome ${userName}! 🎉</h2>
-            <p>Thank you for registering. Please verify your email to get started.</p>
-            
-            <a href="${verificationUrl}" class="button">Verify Email Address</a>
-            
-            <div class="info">
-              <strong>⏰ This link expires in 24 hours</strong>
+          
+        
+            <div class="content">
+              
+        
+              <div class="otp-container">
+                <p class="otp-label">Your Verification Code</p>
+                <div class="otp-code">${otp}</div>
+              </div>
+              
+              <div class="timer">
+                <p class="timer-text">⏰ This code expires in 10 minutes</p>
+              </div>
+              
+              <div class="security-note">
+               
+              </div>
             </div>
             
-            <p>If the button doesn't work, copy this link:</p>
-            <p style="word-break: break-all; background: #f5f5f5; padding: 10px; border-radius: 4px;">
-              ${verificationUrl}
-            </p>
-            
-            <div class="footer">
-              <p>If you didn't create this account, please ignore this email.</p>
-              <p>Having trouble? Reply to this email for support.</p>
-            </div>
+           
           </div>
         </body>
         </html>
       `,
       text: `
-        Welcome ${userName}!
+        Hi ${userName}!
         
-        Please verify your email by visiting: ${verificationUrl}
+        Your verification code is: ${otp}
         
-        This link expires in 24 hours.
+        This code expires in 10 minutes.
         
         If you didn't create this account, please ignore this email.
       `
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Verification email sent to: ${email}`);
+    console.log(`✅ OTP sent to: ${email}`);
     return true;
   } catch (error) {
-    console.error(`❌ Failed to send email to ${email}:`, error.message);
+    console.error(`❌ Failed to send OTP to ${email}:`, error.message);
     return false;
   }
 };
+
+// ✅ KEEP OLD FUNCTION FOR BACKWARD COMPATIBILITY
+export const sendVerificationEmail = sendVerificationOTP; // Alias for old imports
 
 // Send password reset email
 export const sendPasswordResetEmail = async (email, userName, token) => {
@@ -96,7 +197,7 @@ export const sendPasswordResetEmail = async (email, userName, token) => {
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
     const mailOptions = {
-      from: `"${process.env.APP_NAME || 'News Rewards'}" <${process.env.EMAIL_USER}>`,
+      from: `"${process.env.APP_NAME || 'NewsApp'}" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: '🔐 Password Reset Request',
       html: `

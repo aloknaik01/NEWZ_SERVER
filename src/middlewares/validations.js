@@ -12,7 +12,7 @@ export const validate = (req, res, next) => {
   next();
 };
 
-// Register validation
+// ✅ UPDATED: Register validation with referral code
 export const registerValidation = [
   body('email')
     .trim()
@@ -32,11 +32,13 @@ export const registerValidation = [
     .isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters')
     .matches(/^[a-zA-Z\s]+$/).withMessage('Name can only contain letters'),
   
-  body('referredByCode')
+  // ✅ NEW: Referral code validation (optional)
+  body('referralCode')
     .optional()
     .trim()
-    .isLength({ min: 8, max: 8 }).withMessage('Invalid referral code')
+    .isLength({ min: 8, max: 8 }).withMessage('Referral code must be 8 characters')
     .isAlphanumeric().withMessage('Referral code must be alphanumeric')
+    .toUpperCase() // Auto-convert to uppercase
 ];
 
 // Login validation
@@ -48,6 +50,19 @@ export const loginValidation = [
   
   body('password')
     .notEmpty().withMessage('Password is required')
+];
+
+// ✅ NEW: Email + OTP validation
+export const verifyOTPValidation = [
+  body('email')
+    .trim()
+    .isEmail().withMessage('Please provide a valid email')
+    .normalizeEmail(),
+  
+  body('otp')
+    .notEmpty().withMessage('OTP is required')
+    .isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits')
+    .isNumeric().withMessage('OTP must contain only numbers')
 ];
 
 // Email validation (for resend)

@@ -1,3 +1,6 @@
+// 
+
+// src/database/newsSchema.js
 import pool from '../config/database.js';
 
 export async function createNewsArticlesTables() {
@@ -75,7 +78,8 @@ export async function createNewsArticlesTables() {
 
       INSERT INTO news_fetch_tracking (category) VALUES 
       ('all'), ('sports'), ('politics'), ('technology'), 
-      ('business'), ('entertainment'), ('health'), ('crime')
+      ('business'), ('entertainment'), ('health'), ('crime'),
+      ('lifestyle'), ('world'), ('education'), ('food'), ('tourism')
       ON CONFLICT (category) DO NOTHING;
     `);
 
@@ -96,38 +100,34 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_logs_category_date ON news_fetch_logs(category, fetched_at DESC);
     `);
 
-    // 4. Reading History (UPDATED - integrates with existing users)
-
-    // Replace the reading_history table creation with this:
-
-    // 4. Reading History (with complete article data storage)
+    // 4. Reading History - WITH article data persistence
     await client.query(`
-  CREATE TABLE IF NOT EXISTS reading_history (
-    id SERIAL PRIMARY KEY,
-    user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
-    news_article_id INT REFERENCES news_articles(id) ON DELETE SET NULL,
-    
-    -- Stored article data (persists even after article deletion)
-    article_title TEXT NOT NULL,
-    article_category VARCHAR(50),
-    article_image_url TEXT,
-    article_description TEXT,
-    article_link TEXT,
-    article_source VARCHAR(200),
-    
-    -- Reading metrics
-    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP,
-    time_spent INT DEFAULT 0,
-    coins_earned INT DEFAULT 0,
-    is_completed BOOLEAN DEFAULT false,
-    reading_date DATE DEFAULT CURRENT_DATE
-  );
+      CREATE TABLE IF NOT EXISTS reading_history (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES users(user_id) ON DELETE CASCADE,
+        news_article_id INT REFERENCES news_articles(id) ON DELETE SET NULL,
+        
+        -- ✅ Stored article data (persists even after article deletion)
+        article_title TEXT NOT NULL,
+        article_category VARCHAR(50),
+        article_image_url TEXT,
+        article_description TEXT,
+        article_link TEXT,
+        article_source VARCHAR(200),
+        
+        -- Reading metrics
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP,
+        time_spent INT DEFAULT 0,
+        coins_earned INT DEFAULT 0,
+        is_completed BOOLEAN DEFAULT false,
+        reading_date DATE DEFAULT CURRENT_DATE
+      );
 
-  CREATE INDEX IF NOT EXISTS idx_reading_user_date ON reading_history(user_id, reading_date DESC);
-  CREATE INDEX IF NOT EXISTS idx_reading_article ON reading_history(news_article_id);
-  CREATE INDEX IF NOT EXISTS idx_reading_user_article_date ON reading_history(user_id, news_article_id, reading_date);
-`);
+      CREATE INDEX IF NOT EXISTS idx_reading_user_date ON reading_history(user_id, reading_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_reading_article ON reading_history(news_article_id);
+      CREATE INDEX IF NOT EXISTS idx_reading_user_article_date ON reading_history(user_id, news_article_id, reading_date);
+    `);
 
     // 5. Daily Reading Stats
     await client.query(`
@@ -143,7 +143,7 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_daily_stats_user_date ON daily_reading_stats(user_id, reading_date);
     `);
 
-    // 6. Coin Transactions (if not exists)
+    // 6. Coin Transactions
     await client.query(`
       CREATE TABLE IF NOT EXISTS coin_transactions (
         id SERIAL PRIMARY KEY,
@@ -159,19 +159,30 @@ export async function createNewsArticlesTables() {
       CREATE INDEX IF NOT EXISTS idx_transactions_user ON coin_transactions(user_id, created_at DESC);
     `);
 
-    // 7. Update user_profiles table (add streak columns if not exist)
+    // 7. Add streak columns to user_profiles if missing
     await client.query(`
-      ALTER TABLE user_profiles 
-      ADD COLUMN IF NOT EXISTS current_streak INT DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS longest_streak INT DEFAULT 0;
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                      WHERE table_name='user_profiles' AND column_name='current_streak') 
+        THEN
+          ALTER TABLE user_profiles ADD COLUMN current_streak INT DEFAULT 0;
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                      WHERE table_name='user_profiles' AND column_name='longest_streak') 
+        THEN
+          ALTER TABLE user_profiles ADD COLUMN longest_streak INT DEFAULT 0;
+        END IF;
+      END $$;
     `);
 
     await client.query('COMMIT');
-    console.log('News tables created successfully');
+    console.log('✅ News tables created/updated successfully');
 
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error creating news tables:', error);
+    console.error('❌ Error creating news tables:', error);
     throw error;
   } finally {
     client.release();

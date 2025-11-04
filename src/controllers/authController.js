@@ -1,19 +1,30 @@
+// src/controllers/authController.js - FULLY FIXED
 import bcrypt from 'bcryptjs';
 import pool from '../config/database.js';
 import UserModel from '../models/userModel.js';
 import WalletModel from '../models/walletModel.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/tokenUtils.js';
-import { generateReferralCode, generateVerificationToken, parseUserAgent } from '../utils/helpers.js';
-import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/emailService.js';
+import { generateReferralCode, parseUserAgent } from '../utils/helpers.js';
+import { sendVerificationOTP, sendPasswordResetEmail } from '../utils/emailService.js'; // ✅ OTP function
 import { successResponse, errorResponse } from '../utils/responseHandler.js';
 
+// ✅ Generate 6-digit OTP
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
 class AuthController {
-  // REGISTER WITH EMAIL
+  // ✅ REGISTER WITH REFERRAL CODE & OTP
   static async register(req, res) {
     const client = await pool.connect();
 
     try {
-      const { email, password, fullName, referredByCode } = req.body;
+      const { email, password, fullName, referralCode } = req.body;
+
+      // Validate referral code format if provided
+      if (referralCode && (referralCode.length !== 8 || !/^[A-Z0-9]+$/.test(referralCode))) {
+        return errorResponse(res, 400, 'Invalid referral code format');
+      }
 
       // Check if user exists
       const existingUser = await UserModel.findByEmail(email);
@@ -21,11 +32,30 @@ class AuthController {
         return errorResponse(res, 400, 'Email already registered');
       }
 
+      // Verify referral code exists (if provided)
+      let referrerId = null;
+      if (referralCode) {
+        const referrerCheck = await client.query(
+          'SELECT user_id FROM users WHERE referral_code = $1',
+          [referralCode]
+        );
+        
+        if (referrerCheck.rows.length === 0) {
+          return errorResponse(res, 400, 'Invalid referral code');
+        }
+        
+        referrerId = referrerCheck.rows[0].user_id;
+      }
+
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
 
-      // Generate referral code
-      const referralCode = await generateReferralCode();
+      // Generate unique referral code for new user
+      const newReferralCode = await generateReferralCode();
+
+      // ✅ Generate 6-digit OTP (NOT long token)
+      const otp = generateOTP();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
       // Start transaction
       await client.query('BEGIN');
@@ -35,7 +65,7 @@ class AuthController {
         `INSERT INTO users (email, password_hash, referral_code, referred_by_code, login_provider)
          VALUES ($1, $2, $3, $4, 'email')
          RETURNING user_id, email, referral_code`,
-        [email.toLowerCase(), passwordHash, referralCode, referredByCode || null]
+        [email.toLowerCase(), passwordHash, newReferralCode, referralCode || null]
       );
 
       const user = newUser.rows[0];
@@ -54,71 +84,75 @@ class AuthController {
       );
 
       // Handle referral bonus
-      if (referredByCode) {
-        const referrer = await client.query(
-          'SELECT user_id FROM users WHERE referral_code = $1',
-          [referredByCode]
+      if (referrerId) {
+        const bonusAmount = parseInt(process.env.REFERRAL_SIGNUP_BONUS || 100);
+
+        // Create referral record
+        await client.query(
+          `INSERT INTO referrals (referrer_user_id, referred_user_id, referral_code, signup_bonus_coins)
+           VALUES ($1, $2, $3, $4)`,
+          [referrerId, user.user_id, referralCode, bonusAmount]
         );
 
-        if (referrer.rows.length > 0) {
-          const referrerId = referrer.rows[0].user_id;
-          const bonusAmount = parseInt(process.env.REFERRAL_SIGNUP_BONUS || 100);
+        // Give bonus to referrer
+        await client.query(
+          `UPDATE user_wallets 
+           SET available_coins = available_coins + $2,
+               total_earned = total_earned + $2,
+               referral_earnings = referral_earnings + $2
+           WHERE user_id = $1`,
+          [referrerId, bonusAmount]
+        );
 
-          // Create referral record
-          await client.query(
-            `INSERT INTO referrals (referrer_user_id, referred_user_id, referral_code, signup_bonus_coins)
-             VALUES ($1, $2, $3, $4)`,
-            [referrerId, user.user_id, referredByCode, bonusAmount]
-          );
+        // Update referral count
+        await client.query(
+          `UPDATE user_profiles SET total_referrals = total_referrals + 1 WHERE user_id = $1`,
+          [referrerId]
+        );
 
-          // Give bonus to referrer
-          await client.query(
-            `UPDATE user_wallets 
-             SET available_coins = available_coins + $2,
-                 total_earned = total_earned + $2,
-                 referral_earnings = referral_earnings + $2
-             WHERE user_id = $1`,
-            [referrerId, bonusAmount]
-          );
+        // Mark bonus as given
+        await client.query(
+          `UPDATE referrals SET signup_bonus_given = true 
+           WHERE referrer_user_id = $1 AND referred_user_id = $2`,
+          [referrerId, user.user_id]
+        );
 
-          // Update referral count
-          await client.query(
-            `UPDATE user_profiles SET total_referrals = total_referrals + 1 WHERE user_id = $1`,
-            [referrerId]
-          );
+        // Log transaction
+        const walletResult = await client.query(
+          'SELECT available_coins FROM user_wallets WHERE user_id = $1',
+          [referrerId]
+        );
 
-          // Mark bonus as given
-          await client.query(
-            `UPDATE referrals SET signup_bonus_given = true 
-             WHERE referrer_user_id = $1 AND referred_user_id = $2`,
-            [referrerId, user.user_id]
-          );
-        }
+        await client.query(
+          `INSERT INTO coin_transactions (user_id, transaction_type, amount, balance_after, source, description)
+           VALUES ($1, 'bonus', $2, $3, 'referral', $4)`,
+          [referrerId, bonusAmount, walletResult.rows[0].available_coins, `Referral bonus for inviting ${fullName}`]
+        );
       }
 
-      // Generate verification token
-      const verificationToken = generateVerificationToken();
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-
+      // ✅ Store OTP in database
       await client.query(
         `INSERT INTO email_verifications (user_id, verification_token, expires_at, token_type)
          VALUES ($1, $2, $3, 'email_verification')`,
-        [user.user_id, verificationToken, expiresAt]
+        [user.user_id, otp, expiresAt]
       );
 
       await client.query('COMMIT');
 
-      // Send verification email (async, don't wait)
-      sendVerificationEmail(email, fullName, verificationToken).catch(err => {
+      // ✅ CORRECT: Send OTP email (NOT old token email)
+      console.log(`📧 Sending OTP to ${email}: ${otp}`); // Debug log
+      sendVerificationOTP(email, fullName, otp).catch(err => {
         console.error('Email send failed:', err.message);
       });
 
       return successResponse(res, 201,
-        'Registration successful! Please check your email to verify your account.',
+        '🎉 Registration successful! Check your email for the 6-digit verification code.',
         {
           userId: user.user_id,
           email: user.email,
-          referralCode: user.referral_code
+          referralCode: user.referral_code,
+          needsVerification: true,
+          referralBonusEarned: referrerId ? parseInt(process.env.REFERRAL_SIGNUP_BONUS || 100) : 0
         }
       );
 
@@ -134,40 +168,35 @@ class AuthController {
   // LOGIN WITH EMAIL
   static async login(req, res) {
     try {
+      console.log("Hitted")
       const { email, password } = req.body;
 
-      // Find user
       const user = await UserModel.findByEmail(email);
 
       if (!user) {
         return errorResponse(res, 401, 'Invalid email or password');
       }
 
-      // Check email verification
       if (user.login_provider === 'email' && !user.email_verified) {
         return errorResponse(res, 403,
-          'Please verify your email before logging in. Check your inbox for the verification link.',
+          '⚠️ Please verify your email before logging in.',
           { needsVerification: true, email: user.email }
         );
       }
 
-      // Check if user registered with Google
       if (user.login_provider === 'google' && !user.password_hash) {
         return errorResponse(res, 400, 'Please login with Google');
       }
 
-      // Verify password
       const isPasswordValid = await bcrypt.compare(password, user.password_hash);
 
       if (!isPasswordValid) {
         return errorResponse(res, 401, 'Invalid email or password');
       }
 
-      // Generate tokens
       const accessToken = generateAccessToken(user.user_id, user.email, user.role);
       const refreshToken = await generateRefreshToken(user.user_id);
 
-      // SET COOKIE 
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -176,11 +205,8 @@ class AuthController {
         path: '/'
       });
 
-
-      // Update last login
       await UserModel.updateLastLogin(user.user_id);
 
-      // Log login history
       const { deviceType, deviceName } = parseUserAgent(req.headers['user-agent']);
 
       await pool.query(
@@ -189,11 +215,9 @@ class AuthController {
         [user.user_id, req.ip, deviceType, deviceName]
       );
 
-      // Get wallet info
       const wallet = await WalletModel.getBalance(user.user_id);
 
-
-      return successResponse(res, 200, 'Login successful', {
+      return successResponse(res, 200, '✅ Login successful', {
         user: {
           userId: user.user_id,
           email: user.email,
@@ -226,64 +250,118 @@ class AuthController {
     }
   }
 
-  // VERIFY EMAIL
+  // ✅ VERIFY EMAIL - Supports both OLD token links and NEW OTP
   static async verifyEmail(req, res) {
     try {
-      const { token } = req.query;
+      // OLD WAY: GET request with token query param
+      if (req.method === 'GET' && req.query.token) {
+        const { token } = req.query;
 
-      if (!token) {
-        return errorResponse(res, 400, 'Verification token is required');
+        const result = await pool.query(
+          `SELECT * FROM email_verifications 
+           WHERE verification_token = $1 
+           AND token_type = 'email_verification'
+           AND is_used = false 
+           AND expires_at > NOW()`,
+          [token]
+        );
+
+        if (result.rows.length === 0) {
+          return res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head><title>Verification Failed</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px;">
+              <h1>❌ Verification Failed</h1>
+              <p>This link has expired or is invalid.</p>
+              <p>Please request a new verification code from the app.</p>
+            </body>
+            </html>
+          `);
+        }
+
+        const verification = result.rows[0];
+
+        await pool.query('BEGIN');
+        await UserModel.verifyEmail(verification.user_id);
+        await pool.query(
+          'UPDATE email_verifications SET is_used = true WHERE verification_id = $1',
+          [verification.verification_id]
+        );
+        await pool.query('COMMIT');
+
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head><title>Email Verified</title></head>
+          <body style="font-family: Arial; text-align: center; padding: 50px;">
+            <h1>✅ Email Verified!</h1>
+            <p>Your email has been successfully verified.</p>
+            <p>You can now login to your account.</p>
+          </body>
+          </html>
+        `);
       }
 
-      // Find token
-      const result = await pool.query(
-        `SELECT * FROM email_verifications 
-         WHERE verification_token = $1 
-         AND token_type = 'email_verification'
-         AND is_used = false 
-         AND expires_at > NOW()`,
-        [token]
-      );
+      // NEW WAY: POST request with email + OTP
+      if (req.method === 'POST') {
+        const { email, otp } = req.body;
 
-      if (result.rows.length === 0) {
-        return errorResponse(res, 400,
-          'Invalid or expired verification token. Please request a new one.'
+        if (!email || !otp) {
+          return errorResponse(res, 400, 'Email and OTP are required');
+        }
+
+        const user = await UserModel.findByEmail(email);
+
+        if (!user) {
+          return errorResponse(res, 404, 'User not found');
+        }
+
+        const result = await pool.query(
+          `SELECT * FROM email_verifications 
+           WHERE user_id = $1 
+           AND verification_token = $2
+           AND token_type = 'email_verification'
+           AND is_used = false 
+           AND expires_at > NOW()`,
+          [user.user_id, otp]
+        );
+
+        if (result.rows.length === 0) {
+          return errorResponse(res, 400,
+            '❌ Invalid or expired OTP. Please request a new one.'
+          );
+        }
+
+        const verification = result.rows[0];
+
+        await pool.query('BEGIN');
+        await UserModel.verifyEmail(verification.user_id);
+        await pool.query(
+          'UPDATE email_verifications SET is_used = true WHERE verification_id = $1',
+          [verification.verification_id]
+        );
+        await pool.query('COMMIT');
+
+        return successResponse(res, 200,
+          '✅ Email verified successfully! You can now login.'
         );
       }
 
-      const verification = result.rows[0];
-
-      // Start transaction
-      await pool.query('BEGIN');
-
-      // Update user email_verified status
-      await UserModel.verifyEmail(verification.user_id);
-
-      // Mark token as used
-      await pool.query(
-        'UPDATE email_verifications SET is_used = true WHERE verification_id = $1',
-        [verification.verification_id]
-      );
-
-      await pool.query('COMMIT');
-
-      return successResponse(res, 200,
-        'Email verified successfully! You can now login to your account.'
-      );
+      return errorResponse(res, 400, 'Invalid verification request');
 
     } catch (error) {
       await pool.query('ROLLBACK');
       console.error('Verification error:', error);
-      return errorResponse(res, 500, 'Email verification failed. Please try again.');
+      return errorResponse(res, 500, 'Email verification failed');
     }
   }
 
-  // RESEND VERIFICATION EMAIL
+  // ✅ RESEND OTP
   static async resendVerification(req, res) {
     try {
       const { email } = req.body;
 
-      // Find user
       const user = await UserModel.findByEmail(email);
 
       if (!user) {
@@ -294,8 +372,8 @@ class AuthController {
         return errorResponse(res, 400, 'Email already verified');
       }
 
-      // Check rate limit (manual check - additional to middleware)
-      const recentToken = await pool.query(
+      // Rate limit check
+      const recentOTP = await pool.query(
         `SELECT * FROM email_verifications 
          WHERE user_id = $1 
          AND token_type = 'email_verification'
@@ -303,13 +381,13 @@ class AuthController {
         [user.user_id]
       );
 
-      if (recentToken.rows.length > 0) {
+      if (recentOTP.rows.length > 0) {
         return errorResponse(res, 429,
-          'Verification email already sent. Please check your inbox or wait 2 minutes.'
+          '⏰ Please wait 2 minutes before requesting a new code.'
         );
       }
 
-      // Mark old tokens as used
+      // Mark old OTPs as used
       await pool.query(
         `UPDATE email_verifications 
          SET is_used = true 
@@ -317,24 +395,25 @@ class AuthController {
         [user.user_id]
       );
 
-      // Generate new token
-      const verificationToken = generateVerificationToken();
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      // Generate new OTP
+      const otp = generateOTP();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
       await pool.query(
         `INSERT INTO email_verifications (user_id, verification_token, expires_at, token_type)
          VALUES ($1, $2, $3, 'email_verification')`,
-        [user.user_id, verificationToken, expiresAt]
+        [user.user_id, otp, expiresAt]
       );
 
       // Send email
-      await sendVerificationEmail(email, user.full_name, verificationToken);
+      console.log(`📧 Resending OTP to ${email}: ${otp}`); // Debug log
+      await sendVerificationOTP(email, user.full_name, otp);
 
-      return successResponse(res, 200, 'Verification email sent successfully');
+      return successResponse(res, 200, '📧 Verification code sent successfully!');
 
     } catch (error) {
       console.error('Resend verification error:', error);
-      return errorResponse(res, 500, 'Failed to resend verification email');
+      return errorResponse(res, 500, 'Failed to resend verification code');
     }
   }
 
@@ -342,27 +421,22 @@ class AuthController {
   static async requestPasswordReset(req, res) {
     try {
       const { email } = req.body;
-
-      // Find user
       const user = await UserModel.findByEmail(email);
 
-      // Always return success (security - don't reveal if email exists)
       if (!user) {
         return successResponse(res, 200,
           'If your email is registered, you will receive a password reset link.'
         );
       }
 
-      // Check if Google user
       if (user.login_provider === 'google') {
         return errorResponse(res, 400,
           'This account uses Google login. Password reset is not available.'
         );
       }
 
-      // Generate reset token
-      const resetToken = generateVerificationToken();
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      const resetToken = generateOTP();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
       await pool.query(
         `INSERT INTO email_verifications (user_id, verification_token, expires_at, token_type)
@@ -370,7 +444,6 @@ class AuthController {
         [user.user_id, resetToken, expiresAt]
       );
 
-      // Send email
       await sendPasswordResetEmail(email, user.full_name, resetToken);
 
       return successResponse(res, 200,
@@ -388,7 +461,6 @@ class AuthController {
     try {
       const { token, newPassword } = req.body;
 
-      // Find token
       const result = await pool.query(
         `SELECT * FROM email_verifications 
          WHERE verification_token = $1 
@@ -405,31 +477,21 @@ class AuthController {
       }
 
       const verification = result.rows[0];
-
-      // Hash new password
       const passwordHash = await bcrypt.hash(newPassword, 10);
 
-      // Start transaction
       await pool.query('BEGIN');
-
-      // Update password
       await pool.query(
         'UPDATE users SET password_hash = $1 WHERE user_id = $2',
         [passwordHash, verification.user_id]
       );
-
-      // Mark token as used
       await pool.query(
         'UPDATE email_verifications SET is_used = true WHERE verification_id = $1',
         [verification.verification_id]
       );
-
-      // Revoke all refresh tokens for security
       await pool.query(
         'UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1',
         [verification.user_id]
       );
-
       await pool.query('COMMIT');
 
       return successResponse(res, 200,
@@ -443,31 +505,20 @@ class AuthController {
     }
   }
 
-  // REFRESH ACCESS TOKEN
+  // REFRESH TOKEN
   static async refreshToken(req, res) {
     try {
-
       let refreshToken;
 
-      //  Check cookie 
       if (req.cookies && req.cookies.refreshToken) {
         refreshToken = req.cookies.refreshToken;
       }
-
-      //  Check body 
       if (!refreshToken && req.body.refreshToken) {
         refreshToken = req.body.refreshToken;
       }
-
-
-      // Check Authorization header 
       if (!refreshToken && req.headers['x-refresh-token']) {
         refreshToken = req.headers['x-refresh-token'];
       }
-
-      // const { refreshToken } = req.body;
-
-
 
       if (!refreshToken) {
         return errorResponse(res, 401, 'Refresh token not found!');
@@ -480,14 +531,12 @@ class AuthController {
         return errorResponse(res, 401, 'Invalid or expired refresh token');
       }
 
-      // Get user info
       const user = await UserModel.findById(decoded.userId);
 
       if (!user) {
         return errorResponse(res, 404, 'User not found');
       }
 
-      // Generate new access token
       const newAccessToken = generateAccessToken(user.user_id, user.email, user.role);
 
       return successResponse(res, 200, 'Token refreshed successfully', {
@@ -503,18 +552,15 @@ class AuthController {
   // LOGOUT
   static async logout(req, res) {
     try {
-      // READ TOKEN FROM COOKIE
       const refreshToken = req.cookies.refreshToken;
 
       if (refreshToken) {
-        // Revoke token in database
         await pool.query(
           'UPDATE refresh_tokens SET is_revoked = true WHERE token = $1',
           [refreshToken]
         );
       }
 
-      // CLEAR COOKIE
       res.clearCookie('refreshToken', {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',

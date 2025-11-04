@@ -21,12 +21,10 @@ class AuthController {
     try {
       const { email, password, fullName, referralCode } = req.body;
 
-      // Validate referral code format if provided
       if (referralCode && (referralCode.length !== 8 || !/^[A-Z0-9]+$/.test(referralCode))) {
         return errorResponse(res, 400, 'Invalid referral code format');
       }
 
-      // Check if user exists
       const existingUser = await UserModel.findByEmail(email);
       if (existingUser) {
         return errorResponse(res, 400, 'Email already registered');
@@ -39,25 +37,19 @@ class AuthController {
           'SELECT user_id FROM users WHERE referral_code = $1',
           [referralCode]
         );
-        
+
         if (referrerCheck.rows.length === 0) {
           return errorResponse(res, 400, 'Invalid referral code');
         }
-        
+
         referrerId = referrerCheck.rows[0].user_id;
       }
 
-      // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
-
-      // Generate unique referral code for new user
       const newReferralCode = await generateReferralCode();
-
-      // ✅ Generate 6-digit OTP (NOT long token)
       const otp = generateOTP();
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      // Start transaction
       await client.query('BEGIN');
 
       // Create user
@@ -83,54 +75,52 @@ class AuthController {
         [user.user_id]
       );
 
-      // Handle referral bonus
-      if (referrerId) {
-        const bonusAmount = parseInt(process.env.REFERRAL_SIGNUP_BONUS || 100);
+      // ✅ NEW LOGIC: 2-Tier Referral System
+      let signupBonusAmount = 0;
 
-        // Create referral record
+      if (referrerId) {
+        const referrerBonusAmount = parseInt(process.env.REFERRAL_SIGNUP_BONUS || 100); // For referrer (after 20 articles)
+        signupBonusAmount = parseInt(process.env.SIGNUP_BONUS || 100); // For new user (instant)
+
+        // Create referral record (referrer bonus NOT given yet)
         await client.query(
-          `INSERT INTO referrals (referrer_user_id, referred_user_id, referral_code, signup_bonus_coins)
-           VALUES ($1, $2, $3, $4)`,
-          [referrerId, user.user_id, referralCode, bonusAmount]
+          `INSERT INTO referrals (
+            referrer_user_id, 
+            referred_user_id, 
+            referral_code, 
+            signup_bonus_coins, 
+            signup_bonus_given,
+            status
+          ) VALUES ($1, $2, $3, $4, false, 'pending')`,
+          [referrerId, user.user_id, referralCode, referrerBonusAmount]
         );
 
-        // Give bonus to referrer
+        // ✅ Give INSTANT signup bonus to NEW USER (User B)
         await client.query(
           `UPDATE user_wallets 
            SET available_coins = available_coins + $2,
-               total_earned = total_earned + $2,
-               referral_earnings = referral_earnings + $2
+               total_earned = total_earned + $2
            WHERE user_id = $1`,
-          [referrerId, bonusAmount]
+          [user.user_id, signupBonusAmount]
         );
 
-        // Update referral count
+        // Log transaction for new user
+        await client.query(
+          `INSERT INTO coin_transactions (
+            user_id, transaction_type, amount, balance_after, 
+            source, description
+          ) VALUES ($1, 'bonus', $2, $3, 'signup_bonus', 'Welcome signup bonus')`,
+          [user.user_id, signupBonusAmount, signupBonusAmount]
+        );
+
+        // Update referrer's referral count (but NO coins yet)
         await client.query(
           `UPDATE user_profiles SET total_referrals = total_referrals + 1 WHERE user_id = $1`,
           [referrerId]
         );
-
-        // Mark bonus as given
-        await client.query(
-          `UPDATE referrals SET signup_bonus_given = true 
-           WHERE referrer_user_id = $1 AND referred_user_id = $2`,
-          [referrerId, user.user_id]
-        );
-
-        // Log transaction
-        const walletResult = await client.query(
-          'SELECT available_coins FROM user_wallets WHERE user_id = $1',
-          [referrerId]
-        );
-
-        await client.query(
-          `INSERT INTO coin_transactions (user_id, transaction_type, amount, balance_after, source, description)
-           VALUES ($1, 'bonus', $2, $3, 'referral', $4)`,
-          [referrerId, bonusAmount, walletResult.rows[0].available_coins, `Referral bonus for inviting ${fullName}`]
-        );
       }
 
-      // ✅ Store OTP in database
+      // Store OTP
       await client.query(
         `INSERT INTO email_verifications (user_id, verification_token, expires_at, token_type)
          VALUES ($1, $2, $3, 'email_verification')`,
@@ -139,20 +129,23 @@ class AuthController {
 
       await client.query('COMMIT');
 
-      // ✅ CORRECT: Send OTP email (NOT old token email)
-      console.log(`📧 Sending OTP to ${email}: ${otp}`); // Debug log
+      // Send OTP email
+      console.log(`📧 Sending OTP to ${email}: ${otp}`);
       sendVerificationOTP(email, fullName, otp).catch(err => {
         console.error('Email send failed:', err.message);
       });
 
       return successResponse(res, 201,
-        '🎉 Registration successful! Check your email for the 6-digit verification code.',
+        signupBonusAmount > 0
+          ? `🎉 Registration successful! You earned ${signupBonusAmount} coins! Check your email for verification code.`
+          : '🎉 Registration successful! Check your email for the 6-digit verification code.',
         {
           userId: user.user_id,
           email: user.email,
           referralCode: user.referral_code,
           needsVerification: true,
-          referralBonusEarned: referrerId ? parseInt(process.env.REFERRAL_SIGNUP_BONUS || 100) : 0
+          signupBonusEarned: signupBonusAmount, // User B ko mila
+          referrerBonusPending: referrerId ? true : false // User A ko baad me milega
         }
       );
 
@@ -164,6 +157,7 @@ class AuthController {
       client.release();
     }
   }
+
 
   // LOGIN WITH EMAIL
   static async login(req, res) {

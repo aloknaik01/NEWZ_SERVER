@@ -465,7 +465,7 @@ class NewsController {
     }
   }
 
-  // ✅ Get news from DB - EXCLUDE already read articles for current user
+  // Get news from DB - EXCLUDE already read articles for current user
   static async getNewsFromDB(req, res) {
     try {
       const {
@@ -570,7 +570,7 @@ class NewsController {
     }
   }
 
-  // ✅ NEW: Get latest news from DB (for newsDetails page)
+  //NEW: Get latest news from DB (for newsDetails page)
   static async getLatestNews(req, res) {
     try {
       const { limit = 10, excludeId } = req.query;
@@ -587,7 +587,7 @@ class NewsController {
         paramCount++;
       }
 
-      // ✅ Exclude articles user has already read today
+      // Exclude articles user has already read today
       if (userId) {
         whereConditions.push(`id NOT IN (
           SELECT news_article_id 
